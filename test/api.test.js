@@ -1,0 +1,107 @@
+// Prueba la API de Poyo contra un Postgres real con el esquema poyo (ver ../marabunta-db/test/run_local.sh) y un
+// servicio de cuentas simulado. Uso: DATABASE_URL=postgres://poyo_app:...@127.0.0.1:54329/postgres node --test test/
+const { test, before, after } = require('node:test');
+const assert = require('node:assert/strict');
+const http = require('node:http');
+const { spawn } = require('node:child_process');
+const { Pool } = require('pg');
+
+const DB = process.env.DATABASE_URL;
+const ADMIN_DB = process.env.ADMIN_DATABASE_URL; // para sembrar usuarios de auth (solo pruebas)
+let auth, srv, base, admin;
+const users = {}; // nombre -> { id, token }
+
+const call = async (method, path, body, who) => {
+  const r = await fetch(base + '/api' + path, { method, headers: { 'Content-Type': 'application/json', ...(who && { Authorization: 'Bearer ' + users[who].token }) }, body: body && JSON.stringify(body) });
+  return { status: r.status, body: await r.json().catch(() => null) };
+};
+
+before(async () => {
+  admin = new Pool({ connectionString: ADMIN_DB });
+  await admin.query("delete from auth.users where email like '%@test.local'"); // por si una ejecución anterior se interrumpió
+  await admin.query('truncate poyo.profiles cascade; truncate poyo.places cascade; truncate poyo.photo_trash');
+  for (const n of ['ana', 'beto', 'cris', 'root']) {
+    const { rows } = await admin.query(`insert into auth.users (id, email, instance_id) values (gen_random_uuid(), $1, '00000000-0000-0000-0000-000000000000') returning id`, [n + '@test.local']);
+    users[n] = { id: rows[0].id, token: 'tok-' + n };
+  }
+  auth = http.createServer((req, res) => {
+    const who = Object.values(users).find((u) => 'Bearer ' + u.token === req.headers.authorization);
+    res.writeHead(who ? 200 : 401, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(who ? { id: who.id } : { error: 'bad' }));
+  }).listen(54401);
+  srv = spawn('node', ['server.js'], { env: { ...process.env, PORT: 3103, DATABASE_URL: DB, SUPABASE_URL: 'http://127.0.0.1:54401', SUPABASE_ANON_KEY: 'anon', ADMINS: 'root', DATA_DIR: '/private/tmp/claude-502/poyo-test-data' } });
+  base = 'http://127.0.0.1:3103';
+  for (let i = 0; i < 50; i++) { try { await fetch(base + '/api/config'); break; } catch { await new Promise((r) => setTimeout(r, 100)); } }
+});
+after(async () => { srv.kill(); auth.close(); await admin.query("delete from auth.users where email like '%@test.local'"); await admin.end(); });
+
+test('config pública y sesión', async () => {
+  const c = await call('GET', '/config'); assert.equal(c.body.supabaseAnonKey, 'anon'); assert.equal(c.body.bucket, 'poyo-photos');
+  assert.equal((await call('GET', '/me')).body, null);
+  assert.deepEqual((await call('GET', '/me', null, 'ana')).body, { needsProfile: true });
+  assert.equal((await call('POST', '/places/osm-1/reviews', { rating: 5 }, 'ana')).status, 401); // sin perfil no se puede
+});
+
+test('crear perfiles: validación y nombres únicos', async () => {
+  assert.equal((await call('POST', '/me/profile', { username: 'a' }, 'ana')).status, 400);
+  const ok = await call('POST', '/me/profile', { username: 'Ana.G' }, 'ana'); assert.equal(ok.status, 201); assert.equal(ok.body.username, 'Ana.G');
+  assert.equal((await call('POST', '/me/profile', { username: 'otro' }, 'ana')).status, 409);
+  assert.equal((await call('POST', '/me/profile', { username: 'ana.g' }, 'beto')).status, 409); // sin distinguir mayúsculas
+  for (const n of ['beto', 'cris', 'root']) assert.equal((await call('POST', '/me/profile', { username: n }, n)).status, 201);
+  assert.equal((await call('GET', '/me', null, 'root')).body.isAdmin, true);
+  assert.equal((await call('GET', '/me', null, 'ana')).body.isAdmin, false);
+});
+
+test('reseñas: crear, editar, validar fotos, estadísticas', async () => {
+  const place = { lat: 37.17, lng: -3.6, name: 'Banco del Genil', type: 'bench' };
+  const bad = await call('POST', '/places/osm-777/reviews', { rating: 9, place }, 'ana'); assert.equal(bad.status, 400);
+  const mine = users.ana.id + '/0b1c2d3e-0000-4000-8000-000000000001.jpg'.replace(/^/, '');
+  const photo = users.ana.id + '/abcdef123456.jpg', foreign = users.beto.id + '/abcdef123456.jpg';
+  let r = await call('POST', '/places/osm-777/reviews', { rating: 4, text: 'Buena sombra', photos: [photo, foreign, '../x.jpg'], place }, 'ana');
+  assert.equal(r.status, 201); assert.equal(r.body.count, 1); assert.equal(r.body.avg, 4); assert.deepEqual(r.body.photos, [photo]); // solo la foto propia y válida
+  r = await call('POST', '/places/osm-777/reviews', { rating: 2, text: 'Ya no tanto', place }, 'ana'); // editar: misma reseña, conserva fotos
+  assert.equal(r.body.count, 1); assert.equal(r.body.avg, 2); assert.deepEqual(r.body.photos, [photo]);
+  await call('POST', '/places/osm-777/reviews', { rating: 5, place }, 'beto');
+  const d = await call('GET', '/places/osm-777', null, 'ana'); assert.equal(d.body.count, 2); assert.equal(d.body.avg, 3.5);
+  assert.ok(!('_uid' in d.body.reviews[0]) && d.body.reviews[0].author && 'avatar' in d.body.reviews[0]);
+  assert.equal((await call('GET', '/places')).body.length, 1);
+});
+
+test('amistades: solicitud, aceptar, rechazo, feed y perfil', async () => {
+  assert.equal((await call('POST', '/friends/beto', null, 'ana')).body.relation, 'sent');
+  { const x = await call('POST', '/friends/Ana.G', null, 'beto'); assert.equal(x.body.relation, 'friends', JSON.stringify(x)); } // beto acepta
+  assert.equal((await call('POST', '/friends/cris', null, 'ana')).body.relation, 'sent');
+  const list = (await call('GET', '/friends', null, 'cris')).body; assert.equal(list.incoming.length, 1); assert.equal(list.incoming[0].username, 'Ana.G');
+  assert.equal((await call('DELETE', '/friends/Ana.G', null, 'cris')).body.relation, 'none'); // rechaza
+  const feed = (await call('GET', '/feed', null, 'ana')).body; assert.equal(feed.length, 2); assert.ok(feed[0].place.name);
+  const prof = (await call('GET', '/users/beto', null, 'ana')).body;
+  assert.equal(prof.relation, 'friends'); assert.equal(prof.reviewCount, 1); assert.equal(prof.avg, 5); assert.equal(prof.friends.length, 1);
+  const sug = (await call('GET', '/users?q=', null, 'cris')).body; assert.ok(sug.length >= 2 && sug.every((u) => u.username !== 'cris'));
+  assert.equal((await call('GET', '/users?q=an', null, 'cris')).body[0].username, 'Ana.G');
+  assert.equal((await call('POST', '/friends/cris', null, 'cris')).status, 400);
+});
+
+test('borrar, denunciar y moderar', async () => {
+  const rv = (await call('GET', '/places/osm-777', null, 'ana')).body.reviews;
+  const beto = rv.find((r) => r.author === 'beto');
+  assert.equal((await call('DELETE', '/reviews/' + beto.id, null, 'ana')).status, 403);
+  assert.equal((await call('POST', `/reviews/${beto.id}/report`, { reason: 'spam' }, 'ana')).status, 200);
+  assert.equal((await call('GET', '/admin/reports', null, 'ana')).status, 403);
+  const reports = (await call('GET', '/admin/reports', null, 'root')).body; assert.equal(reports.length, 1); assert.equal(reports[0].by, 'Ana.G'); assert.equal(reports[0].review.author, 'beto');
+  assert.equal((await call('DELETE', '/reviews/' + beto.id, null, 'root')).status, 200); // moderador borra
+  assert.equal((await call('GET', '/places/osm-777', null, 'ana')).body.count, 1);
+});
+
+test('avatar, fotos a la papelera y borrado de mis datos', async () => {
+  const av = users.ana.id + '/avatar1234.jpg';
+  assert.equal((await call('PUT', '/me', { avatar: users.beto.id + '/x12345678.jpg' }, 'ana')).status, 400);
+  assert.equal((await call('PUT', '/me', { avatar: av, bio: 'hola' }, 'ana')).body.avatar, av);
+  const av2 = users.ana.id + '/avatar5678.jpg'; await call('PUT', '/me', { avatar: av2 }, 'ana');
+  const { rows } = await admin.query('select path from poyo.photo_trash order by path');
+  assert.ok(rows.some((x) => x.path === av), 'el avatar anterior queda en la papelera');
+  assert.equal((await call('DELETE', '/me', null, 'ana')).status, 200);
+  assert.equal((await call('GET', '/me', null, 'ana')).body.needsProfile, true);
+  assert.equal((await call('GET', '/places/osm-777', null, 'beto')).body.count, 0);
+  const t = (await admin.query('select path from poyo.photo_trash')).rows.map((x) => x.path);
+  assert.ok(t.includes(av2) && t.includes(users.ana.id + '/abcdef123456.jpg'));
+  assert.equal((await call('GET', '/me', null, 'beto')).status, 200);
+});

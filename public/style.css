@@ -117,3 +117,4 @@ button.plain { background:none; border:0; padding:0; text-align:left; color:inhe
 .report .acts { display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
 label { display:grid; gap:4px; font-size:13px; }
 .acts { display:flex; gap:6px; }
+#lang { width:auto; padding:2px 4px; font-size:13px; border-radius:8px; background:var(--bg); }

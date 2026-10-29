@@ -1,3 +1,9 @@
-data
+data/*
+!data/osm
+data/osm/*
+!data/osm/spain.json.gz
 node_modules
 .git
+.env.local
+tools
+test

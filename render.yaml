@@ -1,0 +1,14 @@
+# Render Blueprint: New → Blueprint → elige este repo. Solo hay que pegar DATABASE_URL (secreto).
+services:
+  - type: web
+    name: poyo
+    runtime: docker
+    plan: free
+    region: frankfurt
+    healthCheckPath: /api/config
+    envVars:
+      - { key: DATABASE_URL, sync: false }          # postgresql://poyo_app.<ref>:<contraseña>@aws-1-eu-west-1.pooler.supabase.com:6543/postgres
+      - { key: SUPABASE_URL, value: "https://rcklhdzkpbadqlisaais.supabase.co" }
+      - { key: SUPABASE_ANON_KEY, sync: false }     # clave pública (anon); no la service_role
+      - { key: ADMINS, sync: false }                # usernames moderadores, separados por comas
+      - { key: TRUST_PROXY, value: "1" }

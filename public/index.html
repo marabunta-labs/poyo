@@ -14,41 +14,44 @@
 
 <header class="top">
   <h1>🪑 Poyo</h1>
-  <span id="status">Acércate para ver bancos</span>
+  <span id="status" data-t="Acércate para ver bancos">Acércate para ver bancos</span>
   <nav>
-    <button id="nav-social" title="Amigos y novedades">👥 Amigos</button>
+    <button id="nav-social" data-t-title="Amigos y novedades" data-t="👥 Amigos" title="Amigos y novedades">👥 Amigos</button>
     <button id="nav-me" title="Mi cuenta">👤 Entrar</button>
+    <select id="lang" aria-label="Idioma / Language" title="Idioma / Language"></select>
   </nav>
 </header>
 
 <div id="tools">
   <div class="row1">
     <div class="sbox">
-      <form id="search"><input id="q" type="search" placeholder="Buscar un lugar o sitio…" maxlength="100" autocomplete="off"></form>
+      <form id="search"><input id="q" type="search" placeholder="Buscar un lugar o sitio…" data-t-ph="Buscar un lugar o sitio…" maxlength="100" autocomplete="off"></form>
       <div id="results" hidden></div>
     </div>
-    <button id="viewbtn" title="Capas y estilo del mapa" aria-label="Capas y estilo del mapa">🗺️</button>
+    <button id="viewbtn" title="Capas y estilo del mapa" aria-label="Capas y estilo del mapa" data-t-title="Capas y estilo del mapa" data-t-aria="Capas y estilo del mapa">🗺️</button>
   </div>
   <div id="viewmenu" hidden></div>
   <div id="filters"></div>
 </div>
 
 <div class="fabs">
-  <button id="locate" title="Mi ubicación">📍</button>
-  <button id="add" title="Añadir un sitio">＋ Añadir sitio</button>
+  <button id="locate" title="Mi ubicación" data-t-title="Mi ubicación">📍</button>
+  <button id="add" title="Añadir un sitio" data-t-title="Añadir un sitio" data-t="＋ Añadir sitio">＋ Añadir sitio</button>
 </div>
-<div id="mapchip" hidden><span id="mapchip-t"></span><button id="mapchip-x" aria-label="Quitar del mapa">✕</button></div>
-<div id="hint" hidden>Toca el mapa donde está el sitio · <a href="#" id="cancel">cancelar</a></div>
+<div id="mapchip" hidden><span id="mapchip-t"></span><button id="mapchip-x" aria-label="Quitar del mapa" data-t-aria="Quitar del mapa">✕</button></div>
+<div id="hint" hidden><span data-t="Toca el mapa donde está el sitio ·">Toca el mapa donde está el sitio ·</span> <a href="#" id="cancel" data-t="cancelar">cancelar</a></div>
 
 <aside id="panel" hidden>
-  <div id="pnav"><button id="back" aria-label="Atrás" title="Atrás" disabled>←</button><button id="fwd" aria-label="Adelante" title="Adelante" disabled>→</button></div>
-  <button id="close" aria-label="Cerrar">✕</button>
+  <div id="pnav"><button id="back" aria-label="Atrás" title="Atrás" data-t-aria="Atrás" data-t-title="Atrás" disabled>←</button><button id="fwd" aria-label="Adelante" title="Adelante" data-t-aria="Adelante" data-t-title="Adelante" disabled>→</button></div>
+  <button id="close" aria-label="Cerrar" data-t-aria="Cerrar">✕</button>
   <div id="content"></div>
 </aside>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script src="https://unpkg.com/@maplibre/maplibre-gl-leaflet@0.0.22/leaflet-maplibre-gl.js"></script>
+<script src="i18n.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

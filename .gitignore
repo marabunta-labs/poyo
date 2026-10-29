@@ -1,6 +1,7 @@
 data/db.json
 node_modules
-data/osm/
+data/osm/*
+!data/osm/spain.json.gz
 data/osm-cache.json
 data/osm-cache-3.json
 .env.local
