@@ -51,5 +51,11 @@ docker run -p 3000:3000 -v poyo-osm:/data -e DATABASE_URL=… -e SUPABASE_URL=�
 ```
 Solo el volcado de OSM necesita volumen (`/data`); sin él se regenera con `scripts/import-osm.js`. Ya no hay límite de una sola instancia.
 
+## Alternativa: Vercel (rama `vercel`)
+`main` se despliega en Render (Docker, `render.yaml`). La rama **`vercel`** contiene lo necesario para alojarlo en Vercel sin servidor permanente:
+`api/[...path].js` (toda petición `/api/*` va a esta función, que importa el handler de `server.js`), `vercel.json` (la web de `public/` se sirve como estático; la función incluye el volcado de OSM, 1 GB de memoria, 10 s máx.) y `server.js` exportando el handler (`node server.js` sigue arrancando el servidor como siempre).
+Para usarla: `vercel link` en el repo → variables `DATABASE_URL`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `ADMINS` y `TRUST_PROXY=1` (producción) → `vercel --prod` (o conectar el repo a Vercel con esa rama como producción) → añadir la URL a las redirecciones permitidas de Supabase Auth.
+Ten en cuenta: cada instancia de la función es efímera (el límite de peticiones y la caché de tokens son por instancia, así que el límite es aproximado), la caché de Overpass no se guarda (disco de solo lectura) y el plan Hobby de Vercel es para uso no comercial.
+
 ## Cuentas
 Las gestiona Supabase Auth: confirmación por email, recuperación de contraseña por email y Google. En Poyo la primera vez se elige un `@usuario`. «Borrar mis datos de Poyo» elimina solo lo de Poyo; la cuenta de Marabunta Labs y las otras apps no se tocan.

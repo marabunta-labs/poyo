@@ -23,7 +23,8 @@ if (!process.env.DATABASE_URL || !SUPABASE_URL || !SUPABASE_ANON_KEY) {
   console.error('Faltan DATABASE_URL, SUPABASE_URL o SUPABASE_ANON_KEY (ver README).');
   process.exit(1);
 }
-const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 8, idleTimeoutMillis: 30000 });
+// En Vercel cada instancia de la función es pequeña y efímera: pocas conexiones (el pooler de Supabase hace el resto).
+const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: process.env.VERCEL ? 2 : 8, idleTimeoutMillis: 30000 });
 pool.on('error', (e) => console.error('pg', e.message));
 const q = async (sql, params = []) => (await pool.query(sql, params)).rows;
 const q1 = async (sql, params = []) => (await q(sql, params))[0];
@@ -438,7 +439,7 @@ async function api(req, res, url) {
   fail(404, 'No encontrado');
 }
 
-http.createServer((req, res) => {
+const handler = (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   if (url.pathname.startsWith('/api/')) {
     return api(req, res, url).catch((e) => {
@@ -454,4 +455,8 @@ http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'X-Content-Type-Options': 'nosniff' });
     res.end(buf);
   });
-}).listen(PORT, () => console.log(`Poyo en http://localhost:${PORT}`));
+};
+
+// `node server.js` (Docker/Render) arranca el servidor; en Vercel, api/[...path].js importa el handler.
+module.exports = handler;
+if (require.main === module) http.createServer(handler).listen(PORT, () => console.log(`Poyo en http://localhost:${PORT}`));

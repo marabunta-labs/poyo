@@ -1,0 +1,13 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "buildCommand": null,
+  "outputDirectory": "public",
+  "functions": {
+    "api/[...path].js": {
+      "includeFiles": "data/osm/**",
+      "maxDuration": 10,
+      "memory": 1024
+    }
+  }
+}
