@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Poyo · mapa de sitios para sentarse</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🪑</text></svg>">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="map"></div>
+
+<header class="top">
+  <h1>🪑 Poyo</h1>
+  <span id="status">Acércate para ver bancos</span>
+  <nav>
+    <button id="nav-social" title="Amigos y novedades">👥 Amigos</button>
+    <button id="nav-me" title="Mi cuenta">👤 Entrar</button>
+  </nav>
+</header>
+
+<div id="tools">
+  <div class="row1">
+    <div class="sbox">
+      <form id="search"><input id="q" type="search" placeholder="Buscar un lugar o sitio…" maxlength="100" autocomplete="off"></form>
+      <div id="results" hidden></div>
+    </div>
+    <button id="viewbtn" title="Capas y estilo del mapa" aria-label="Capas y estilo del mapa">🗺️</button>
+  </div>
+  <div id="viewmenu" hidden></div>
+  <div id="filters"></div>
+</div>
+
+<div class="fabs">
+  <button id="locate" title="Mi ubicación">📍</button>
+  <button id="add" title="Añadir un sitio">＋ Añadir sitio</button>
+</div>
+<div id="mapchip" hidden><span id="mapchip-t"></span><button id="mapchip-x" aria-label="Quitar del mapa">✕</button></div>
+<div id="hint" hidden>Toca el mapa donde está el sitio · <a href="#" id="cancel">cancelar</a></div>
+
+<aside id="panel" hidden>
+  <div id="pnav"><button id="back" aria-label="Atrás" title="Atrás" disabled>←</button><button id="fwd" aria-label="Adelante" title="Adelante" disabled>→</button></div>
+  <button id="close" aria-label="Cerrar">✕</button>
+  <div id="content"></div>
+</aside>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="https://unpkg.com/@maplibre/maplibre-gl-leaflet@0.0.22/leaflet-maplibre-gl.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

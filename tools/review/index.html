@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Poyo · Revisión</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root { color-scheme: dark; --bg:#14161a; --card:#1e2127; --line:#2f343c; --fg:#e8eaed; --mut:#9aa0a8; --ok:#3fb26b; --no:#e05252; --dbt:#e0a43a; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px system-ui, sans-serif; background:var(--bg); color:var(--fg); display:grid; grid-template-rows:auto 1fr auto; height:100vh; }
+  header { display:flex; gap:16px; align-items:center; padding:10px 16px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  header b { font-size:16px; }
+  .mut { color:var(--mut); }
+  .bar { flex:1; min-width:120px; height:8px; background:var(--card); border-radius:4px; overflow:hidden; display:flex; }
+  .bar i { display:block; height:100%; }
+  main { display:grid; grid-template-columns:1fr 150px; gap:12px; padding:12px 16px; min-height:0; }
+  #stage { position:relative; background:#000; border-radius:8px; overflow:hidden; display:flex; align-items:center; justify-content:center; min-height:0; user-select:none; }
+  #wrap { position:relative; line-height:0; max-width:100%; max-height:100%; }
+  #img { max-width:100%; max-height:calc(100vh - 210px); cursor:crosshair; -webkit-user-drag:none; }
+  #sel { position:absolute; border:2px solid #fff; box-shadow:0 0 0 9999px rgba(0,0,0,.55); display:none; pointer-events:none; }
+  #msg { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; text-align:center; padding:24px; color:var(--mut); line-height:1.5; }
+  #sv { display:none; width:100%; height:100%; border:0; }
+  #stage.sv #sv { display:block; }
+  #stage.sv #wrap, #stage.sv #msg { display:none !important; }
+  #nudge { display:none; position:absolute; right:12px; top:50%; transform:translateY(-50%); grid-template:repeat(3,34px)/repeat(3,34px); gap:4px; }
+  #stage.sv #nudge { display:grid; }
+  #nudge button { padding:0; background:rgba(20,22,26,.88); }
+  /* overlays */
+  .ovl { position:fixed; inset:0; z-index:10; background:var(--bg); display:flex; flex-direction:column; }
+  .ovl[hidden] { display:none; }
+  .ovl .top { display:flex; gap:8px; align-items:center; padding:10px 16px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  .ovl .top .sp { flex:1; }
+  .ovl .top button.on { border-color:#fff; }
+  #flt .fbody { flex:1; display:grid; grid-template-columns:260px 1fr; min-height:0; }
+  #flt .fside { padding:14px 16px; display:flex; flex-direction:column; gap:14px; overflow:auto; border-right:1px solid var(--line); }
+  #flt label { display:flex; flex-direction:column; gap:4px; }
+  #flt .chk { flex-direction:row; align-items:center; gap:8px; }
+  #flt select { font:inherit; color:var(--fg); background:var(--card); border:1px solid var(--line); border-radius:6px; padding:7px; }
+  #flt .row { display:flex; gap:6px; flex-wrap:wrap; }
+  #flt .row button { padding:6px 10px; font-size:13px; }
+  #fmap { min-height:0; background:#222; }
+  @media (max-width:700px) { #flt .fbody { grid-template-columns:1fr; grid-template-rows:auto 1fr; } }
+  #grid { overflow:auto; padding:12px 16px; display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:10px; align-content:start; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:8px; overflow:hidden; cursor:pointer; }
+  .card:hover { border-color:var(--mut); }
+  .card .ph { aspect-ratio:4/3; background:#000; display:flex; align-items:center; justify-content:center; color:var(--mut); font-size:12px; }
+  .card .ph img { width:100%; height:100%; object-fit:cover; }
+  .card .t { padding:6px 8px; font-size:13px; line-height:1.4; }
+  .card .t b.exists { color:var(--ok); } .card .t b.missing { color:var(--no); } .card .t b.doubt { color:var(--dbt); }
+  #side { overflow-y:auto; display:flex; flex-direction:column; gap:8px; }
+  .th { position:relative; border:2px solid transparent; border-radius:6px; overflow:hidden; cursor:pointer; background:var(--card); line-height:0; flex:none; }
+  .th.on { border-color:#fff; }
+  .th img { width:100%; aspect-ratio:4/3; object-fit:cover; }
+  .th span { position:absolute; left:0; right:0; bottom:0; font-size:11px; line-height:1.3; padding:2px 5px; background:rgba(0,0,0,.65); }
+  .th kbd { position:absolute; top:2px; left:3px; font-size:11px; background:rgba(0,0,0,.65); padding:0 4px; border-radius:3px; }
+  footer { padding:10px 16px 14px; border-top:1px solid var(--line); display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  button { font:inherit; color:var(--fg); background:var(--card); border:1px solid var(--line); border-radius:8px; padding:9px 16px; cursor:pointer; }
+  button:hover { border-color:var(--mut); }
+  button kbd { opacity:.6; margin-left:6px; font-size:12px; }
+  .ok { background:var(--ok); border-color:var(--ok); color:#06210f; font-weight:600; }
+  .no { background:var(--no); border-color:var(--no); color:#2b0707; font-weight:600; }
+  .dbt { background:var(--dbt); border-color:var(--dbt); color:#2b1d03; font-weight:600; }
+  a { color:#8ab4f8; }
+  #info { flex:1; min-width:220px; }
+  @media (max-width:700px) { main { grid-template-columns:1fr; } #side { flex-direction:row; } .th { width:110px; } }
+</style>
+</head>
+<body>
+<header>
+  <b>🪑 Poyo · Revisión</b>
+  <span id="zone" class="mut"></span>
+  <div class="bar" id="bar" title="Existe / No existe / Dudoso"></div>
+  <span id="prog" class="mut"></span>
+  <button id="fltbtn">Filtros</button><button id="revbtn">Revisados</button>
+</header>
+<main>
+  <div id="stage">
+    <div id="wrap"><img id="img" alt="" draggable="false"><div id="sel"></div></div>
+    <iframe id="sv" allow="accelerometer; gyroscope; fullscreen"></iframe>
+    <div id="nudge" title="Mueve el punto de búsqueda 12 m si Street View te deja dentro de un edificio">
+      <button data-d="n" style="grid-area:1/2">↑</button><button data-d="w" style="grid-area:2/1">←</button>
+      <button data-d="0" style="grid-area:2/2">⊙</button><button data-d="e" style="grid-area:2/3">→</button>
+      <button data-d="s" style="grid-area:3/2">↓</button>
+    </div>
+    <div id="msg">Cargando…</div>
+  </div>
+  <div id="side"></div>
+</main>
+<footer>
+  <div id="info"></div>
+  <button class="ok" data-v="exists">Existe<kbd>E</kbd></button>
+  <button class="no" data-v="missing">No existe<kbd>N</kbd></button>
+  <button class="dbt" data-v="doubt">Dudoso<kbd>D</kbd></button>
+  <button id="svbtn" title="Abre Street View aquí mismo">Street View<kbd>V</kbd></button>
+  <button id="cap" title="Captura lo que ves (pide permiso una vez) y lo deja listo para recortar">📸 Capturar<kbd>C</kbd></button>
+  <button id="skip">Saltar<kbd>S</kbd></button>
+  <button id="undo">Deshacer<kbd>Z</kbd></button>
+</footer>
+<div id="rev" class="ovl" hidden>
+  <div class="top"><b>Revisados</b><span id="revn" class="mut"></span><span class="sp"></span>
+    <button data-f="all" class="on">Todos</button><button data-f="exists">Existe</button><button data-f="missing">No existe</button><button data-f="doubt">Dudoso</button>
+    <span class="mut">·</span>
+    <button data-k="" class="on">Todo tipo</button><button data-k="b">🪑 Banco</button><button data-k="f">💧 Fuente</button><button data-k="s">🛒 Tienda</button><button data-k="p">🧺 Mesa</button>
+    <button id="revx">Cerrar ✕</button></div>
+  <div id="grid"></div>
+</div>
+<div id="flt" class="ovl" hidden>
+  <div class="top"><b>Qué revisar</b><span class="sp"></span><button id="fltgo" class="ok">Empezar a revisar</button><button id="fltx">Cancelar ✕</button></div>
+  <div class="fbody">
+    <div class="fside">
+      <label>Zona <select id="fzone"></select></label>
+      <div><div class="mut" style="margin-bottom:6px">Tipo</div><div id="fkinds" style="display:flex;flex-direction:column;gap:6px"></div></div>
+      <label>Separación mínima entre revisados
+        <select id="frad"><option value="0">Sin separación</option><option value="50">50 m</option><option value="100">100 m</option><option value="200">200 m</option><option value="400">400 m</option></select>
+        <span class="mut" style="font-size:12px">Oculta los del mismo tipo que estén más cerca que esto de uno ya revisado.</span>
+      </label>
+      <div><div class="mut" style="margin-bottom:6px">Área del mapa</div>
+        <div class="row"><button id="fdraw">▭ Dibujar</button><button id="fview">Usar lo visible</button><button id="fclear">Quitar</button></div></div>
+      <div id="fcount" class="mut"></div>
+      <div class="mut" style="font-size:12px;line-height:1.7">● sin revisar (color por tipo) · <span style="color:var(--ok)">● existe</span> · <span style="color:var(--no)">● no existe</span> · <span style="color:var(--dbt)">● dudoso</span></div>
+    </div>
+    <div id="fmap"></div>
+  </div>
+</div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+const img = $('#img'), sel = $('#sel'), msg = $('#msg'), side = $('#side');
+let gkey = null, place = null, images = [], cur = null, crop = null, last = null, busy = false, off = { n: 0, e: 0 };
+const skipped = [];
+
+const api = async (path, body) => {
+  const r = await fetch(path, body ? { method: 'POST', body: JSON.stringify(body) } : undefined);
+  const j = await r.json(); if (!r.ok) throw new Error(j.error || r.status); return j;
+};
+const proxied = (u) => '/img?u=' + encodeURIComponent(u);
+
+const KINDS = { b: ['🪑', 'Bancos'], f: ['💧', 'Fuentes'], s: ['🛒', 'Tiendas'], p: ['🧺', 'Mesas'] };
+const KCOL = { b: '#8ab4f8', f: '#4dd0e1', s: '#f48fb1', p: '#d4a85a' };
+let zones = {}, filt = { zone: null, kinds: 'bfsp', box: null, radius: 100 };
+try { Object.assign(filt, JSON.parse(localStorage.getItem('poyo-filter') || '{}')); } catch {}
+const fquery = () => new URLSearchParams({ ...(filt.zone && { zone: filt.zone }), kinds: filt.kinds, radius: filt.radius, ...(filt.box && { bbox: filt.box.join(',') }) }).toString();
+const fsummary = () => [filt.zone, filt.kinds.length < 4 ? [...filt.kinds].map((k) => KINDS[k][1].toLowerCase()).join('+') : 'todo', filt.box && 'área', filt.radius && `≥${filt.radius} m`].filter(Boolean).join(' · ');
+
+async function next() {
+  const s = await api('/api/state?' + fquery() + '&skip=' + skipped.join(','));
+  zones = s.zones; filt.zone = s.zone;
+  $('#zone').textContent = fsummary();
+  const { exists, missing, doubt } = s.counts, done = exists + missing + doubt;
+  $('#bar').innerHTML = [['--ok', exists], ['--no', missing], ['--dbt', doubt]].map(([c, n]) => `<i style="background:var(${c});width:${n / s.total * 100}%"></i>`).join('');
+  const rate = done ? Math.round(exists / done * 100) : null;
+  $('#prog').textContent = `${done}/${s.total} revisados` + (rate !== null ? ` · ${rate}% existen` : '') + (s.hidden ? ` · ${s.hidden} ocultos por cercanía` : '');
+  gkey = s.gkey;
+  if (!s.pending) { place = null; toggleSV(false); return show(s.left ? 'Solo quedan sitios saltados. Recarga la página para verlos de nuevo.' : s.hidden ? 'Nada más que revisar con esta separación. Bájala en Filtros para ver los ocultos.' : '🎉 Nada más que revisar con este filtro'); }
+  load(s.pending);
+}
+
+const VERDICT = { exists: '✔ Existe', missing: '✖ No existe', doubt: '? Dudoso' };
+async function load(p) {
+  place = p; images = []; cur = null; off = { n: 0, e: 0 }; clearSel(); side.innerHTML = ''; img.removeAttribute('src');
+  const gm = `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${p.lat},${p.lng}`;
+  $('#info').innerHTML = `<b>${p.type}</b>${p.name ? ' · ' + esc(p.name) : ''}${p.review ? ` · <b>Actual: ${VERDICT[p.review.verdict]}</b>` : ''}<br><span class="mut">${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}</span> · <a target="_blank" rel="noopener" href="${gm}">Street View ↗</a> · <a target="_blank" rel="noopener" href="https://www.openstreetmap.org/?mlat=${p.lat}&mlon=${p.lng}#map=19/${p.lat}/${p.lng}">OSM ↗</a>`;
+  toggleSV(true); // Street View por defecto; las fotos de Mapillary quedan como miniaturas de apoyo
+  const r = await api(`/api/images?lat=${p.lat}&lng=${p.lng}`);
+  if (place !== p) return;
+  images = r.images;
+  images.forEach((im, i) => {
+    const t = document.createElement('div'); t.className = 'th';
+    t.innerHTML = `<img loading="lazy" src="${proxied(im.url)}"><kbd>${i < 9 ? i + 1 : ''}</kbd><span>${im.dist} m · ${im.pano ? '360°' : im.off + '°'} · ${new Date(im.capturedAt).getFullYear()}</span>`;
+    t.onclick = () => pick(i); side.append(t);
+  });
+}
+const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+function show(text) { msg.textContent = text; msg.style.display = 'flex'; img.style.visibility = 'hidden'; }
+function showImage(src) {
+  toggleSV(false); clearSel(); msg.style.display = 'none'; img.style.visibility = 'visible'; img.src = src;
+}
+function pick(i) {
+  if (!images[i]) return;
+  cur = images[i]; showImage(proxied(cur.url));
+  [...side.children].forEach((c, j) => c.classList.toggle('on', j === i));
+}
+
+// ---- Street View incrustado + captura de pantalla ----
+const stage = $('#stage'), sv = $('#sv');
+const svOpen = () => stage.classList.contains('sv');
+function toggleSV(on = !svOpen()) {
+  if (!place) on = false;
+  stage.classList.toggle('sv', on);
+  const lat = place && place.lat + off.n / 111320, lng = place && place.lng + off.e / (111320 * Math.cos(place.lat * Math.PI / 180));
+  const key = on && `${place.id}|${off.n}|${off.e}`;
+  if (on && sv.dataset.id !== key) { // arrastra para girar, flechas del visor para moverte
+    sv.dataset.id = key;
+    sv.src = gkey // Maps Embed API (gratis, pide clave) o visor sin clave
+      ? `https://www.google.com/maps/embed/v1/streetview?key=${gkey}&location=${lat},${lng}&fov=90`
+      : `https://maps.google.com/maps?layer=c&cbll=${lat},${lng}&cbp=11,0,0,0,0&output=svembed`;
+  }
+}
+let stream = null;
+const live = () => stream?.getVideoTracks()[0]?.readyState === 'live';
+async function capture() {
+  if (!place) return;
+  try {
+    if (!live()) stream = await navigator.mediaDevices.getDisplayMedia({ video: true, preferCurrentTab: true, selfBrowserSurface: 'include' });
+    const track = stream.getVideoTracks()[0];
+    const v = document.createElement('video'); v.srcObject = stream; v.muted = true; await v.play();
+    await new Promise((r) => setTimeout(r, 200)); // un fotograma ya servido
+    let sx = 0, sy = 0, sw = v.videoWidth, sh = v.videoHeight;
+    if (svOpen() && track.getSettings().displaySurface === 'browser') { // pestaña entera → recorta al visor
+      const k = v.videoWidth / innerWidth, r = sv.getBoundingClientRect();
+      [sx, sy, sw, sh] = [r.left * k, r.top * k, r.width * k, r.height * k];
+    } // si compartes otra ventana, se usa entera y recortas a mano
+    const c = document.createElement('canvas'); c.width = Math.round(sw); c.height = Math.round(sh);
+    c.getContext('2d').drawImage(v, sx, sy, sw, sh, 0, 0, c.width, c.height);
+    v.srcObject = null;
+    const blob = await new Promise((res) => c.toBlob(res, 'image/jpeg', 0.92));
+    cur = { source: 'streetview-capture', id: `${place.lat},${place.lng}` };
+    [...side.children].forEach((t) => t.classList.remove('on'));
+    showImage(URL.createObjectURL(blob));
+  } catch (e) { if (e.name !== 'NotAllowedError') alert('No se pudo capturar: ' + e.message); }
+}
+$('#svbtn').onclick = () => toggleSV();
+document.querySelectorAll('#nudge [data-d]').forEach((b) => b.onclick = () => { // desplaza el punto 12 m (N/S/E/O) y recarga el visor
+  const d = b.dataset.d;
+  if (d === '0') off = { n: 0, e: 0 }; else { off.n += { n: 12, s: -12 }[d] || 0; off.e += { e: 12, w: -12 }[d] || 0; }
+  toggleSV(true);
+});
+$('#cap').onclick = capture;
+addEventListener('beforeunload', () => stream?.getTracks().forEach((t) => t.stop()));
+
+// ---- recorte con el ratón (coordenadas relativas a la imagen mostrada) ----
+function clearSel() { crop = null; sel.style.display = 'none'; }
+let drag = null;
+img.addEventListener('pointerdown', (e) => {
+  const r = img.getBoundingClientRect(); drag = { x: e.clientX - r.left, y: e.clientY - r.top, r };
+  img.setPointerCapture(e.pointerId); clearSel();
+});
+img.addEventListener('pointermove', (e) => {
+  if (!drag) return;
+  const { r } = drag, x = Math.min(Math.max(e.clientX - r.left, 0), r.width), y = Math.min(Math.max(e.clientY - r.top, 0), r.height);
+  crop = { x: Math.min(x, drag.x), y: Math.min(y, drag.y), w: Math.abs(x - drag.x), h: Math.abs(y - drag.y) };
+  Object.assign(sel.style, { display: 'block', left: crop.x + 'px', top: crop.y + 'px', width: crop.w + 'px', height: crop.h + 'px' });
+});
+img.addEventListener('pointerup', () => { drag = null; if (crop && (crop.w < 20 || crop.h < 20)) clearSel(); });
+
+function cropBlob() {
+  const k = img.naturalWidth / img.clientWidth;
+  const c = document.createElement('canvas');
+  c.width = Math.round(crop.w * k); c.height = Math.round(crop.h * k);
+  c.getContext('2d').drawImage(img, crop.x * k, crop.y * k, c.width, c.height, 0, 0, c.width, c.height);
+  return new Promise((res) => c.toBlob(res, 'image/jpeg', 0.9));
+}
+
+async function decide(verdict) {
+  if (!place || busy) return; busy = true;
+  try {
+    const body = { id: place.id, verdict };
+    if (crop && cur && verdict !== 'missing') { // la foto solo se guarda si el sitio existe (o es dudoso)
+      const r = await fetch('/api/crop?id=' + encodeURIComponent(place.id), { method: 'POST', body: await cropBlob() });
+      if (!r.ok) throw new Error('No se pudo guardar el recorte');
+      Object.assign(body, { crop: (await r.json()).crop, source: cur.source, sourceId: cur.id });
+    }
+    await api('/api/verdict', body);
+    last = place.id; await next();
+  } catch (e) { alert(e.message); } finally { busy = false; }
+}
+document.querySelectorAll('[data-v]').forEach((b) => b.onclick = () => decide(b.dataset.v));
+$('#skip').onclick = () => { if (place) { skipped.push(place.id); next(); } };
+$('#undo').onclick = async () => {
+  if (!last) return;
+  await api('/api/undo', { id: last }); const p = await api('/api/place?id=' + encodeURIComponent(last));
+  last = null; await next(); load(p);
+};
+// ---- pantalla de revisados: ver y corregir ----
+let reviewed = [], revFilter = 'all', revKind = '';
+function renderRev() {
+  const list = reviewed.filter((r) => (revFilter === 'all' || r.verdict === revFilter) && (!revKind || r.kind === revKind));
+  $('#revn').textContent = `${list.length} de ${reviewed.length}`;
+  $('#grid').replaceChildren(...list.map((r) => {
+    const c = document.createElement('div'); c.className = 'card';
+    c.innerHTML = `<div class="ph">${r.crop ? `<img loading="lazy" src="/crops/${r.crop}?t=${r.at}">` : 'sin foto'}</div><div class="t"><b class="${r.verdict}">${VERDICT[r.verdict]}</b> · ${r.type}${r.name ? ' · ' + esc(r.name) : ''}<br><span class="mut">${r.lat.toFixed(4)}, ${r.lng.toFixed(4)}</span></div>`;
+    c.onclick = async () => { $('#rev').hidden = true; last = null; load(await api('/api/place?id=' + encodeURIComponent(r.id))); };
+    return c;
+  }));
+  document.querySelectorAll('#rev [data-f]').forEach((b) => b.classList.toggle('on', b.dataset.f === revFilter));
+  document.querySelectorAll('#rev [data-k]').forEach((b) => b.classList.toggle('on', b.dataset.k === revKind));
+}
+$('#revbtn').onclick = async () => { $('#rev').hidden = false; reviewed = await api('/api/reviewed'); renderRev(); };
+$('#revx').onclick = () => { $('#rev').hidden = true; };
+document.querySelectorAll('#rev [data-f]').forEach((b) => b.onclick = () => { revFilter = b.dataset.f; renderRev(); });
+document.querySelectorAll('#rev [data-k]').forEach((b) => b.onclick = () => { revKind = b.dataset.k; renderRev(); });
+
+// ---- filtros: qué revisar (zona, tipo, separación, área dibujada) ----
+let fdraft, fmap, flayer, frect, fpts = [], fdrawing = false, fstart = null;
+const setBox = (bounds) => { // bounds: [s, w, n, e] o null
+  frect?.remove(); frect = null; fdraft.box = bounds;
+  if (bounds && fmap) frect = L.rectangle([[bounds[0], bounds[1]], [bounds[2], bounds[3]]], { color: '#fff', weight: 2, fill: false, interactive: false }).addTo(fmap);
+};
+function renderPts() {
+  if (!fmap) return;
+  flayer.clearLayers(); let open = 0, inArea = 0;
+  for (const [lat, lng, k, st] of fpts) {
+    if (!fdraft.kinds.includes(k)) continue;
+    const inside = !fdraft.box || (lat >= fdraft.box[0] && lat <= fdraft.box[2] && lng >= fdraft.box[1] && lng <= fdraft.box[3]);
+    if (!st) { open++; if (inside) inArea++; }
+    L.circleMarker([lat, lng], { radius: st ? 5 : 4, weight: st ? 1.5 : 0.5, color: st ? '#fff' : '#000', fillColor: ['', '#3fb26b', '#e05252', '#e0a43a'][st] || KCOL[k], fillOpacity: inside ? 0.9 : 0.25, interactive: false }).addTo(flayer);
+  }
+  $('#fcount').textContent = `${inArea} sin revisar en el filtro` + (fdraft.box ? ` (${open} en toda la zona)` : '') + '. Con la separación elegida habrá menos que revisar.';
+}
+async function loadPoints() {
+  fpts = await api('/api/points?zone=' + fdraft.zone);
+  const z = zones[fdraft.zone]; fmap.fitBounds([[z[0], z[1]], [z[2], z[3]]]);
+  renderPts();
+}
+async function openFilter() {
+  fdraft = { ...filt, box: filt.box && [...filt.box] };
+  $('#flt').hidden = false;
+  $('#fzone').innerHTML = Object.keys(zones).map((z) => `<option>${z}</option>`).join(''); $('#fzone').value = fdraft.zone;
+  $('#fkinds').innerHTML = Object.entries(KINDS).map(([k, [ic, n]]) => `<label class="chk"><input type="checkbox" value="${k}" ${fdraft.kinds.includes(k) ? 'checked' : ''}> ${ic} ${n}</label>`).join('');
+  $('#frad').value = String(fdraft.radius);
+  if (typeof L === 'undefined') return ($('#fmap').textContent = 'No se pudo cargar el mapa (Leaflet): comprueba la conexión.');
+  if (!fmap) {
+    fmap = L.map('fmap', { preferCanvas: true });
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(fmap);
+    flayer = L.layerGroup().addTo(fmap);
+    fmap.on('mousedown', (e) => { if (!fdrawing) return; fstart = e.latlng; setBox([e.latlng.lat, e.latlng.lng, e.latlng.lat, e.latlng.lng]); });
+    fmap.on('mousemove', (e) => { if (fdrawing && fstart) frect.setBounds([fstart, e.latlng]); });
+    fmap.on('mouseup', () => {
+      if (!fdrawing || !fstart) return;
+      const b = frect.getBounds(); fstart = null; fdrawing = false; fmap.dragging.enable(); fmap.getContainer().style.cursor = '';
+      setBox(b.getNorth() - b.getSouth() > 0.0003 ? [b.getSouth(), b.getWest(), b.getNorth(), b.getEast()] : null); renderPts();
+    });
+  }
+  fmap.invalidateSize(); setBox(fdraft.box); await loadPoints();
+}
+$('#fltbtn').onclick = openFilter;
+$('#fltx').onclick = () => { $('#flt').hidden = true; };
+$('#fltgo').onclick = () => {
+  filt = fdraft; try { localStorage.setItem('poyo-filter', JSON.stringify(filt)); } catch {}
+  $('#flt').hidden = true; skipped.length = 0; next();
+};
+$('#fzone').onchange = (e) => { fdraft.zone = e.target.value; setBox(null); loadPoints(); };
+$('#frad').onchange = (e) => { fdraft.radius = Number(e.target.value); };
+$('#fkinds').onchange = (e) => {
+  const on = [...document.querySelectorAll('#fkinds input:checked')].map((i) => i.value).join('');
+  if (!on) e.target.checked = true; else fdraft.kinds = on; // siempre al menos un tipo
+  renderPts();
+};
+$('#fdraw').onclick = () => { if (!fmap) return; fdrawing = true; fmap.dragging.disable(); fmap.getContainer().style.cursor = 'crosshair'; };
+$('#fview').onclick = () => { if (!fmap) return; const b = fmap.getBounds(); setBox([b.getSouth(), b.getWest(), b.getNorth(), b.getEast()]); renderPts(); };
+$('#fclear').onclick = () => { setBox(null); renderPts(); };
+
+addEventListener('keydown', (e) => {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const k = e.key.toLowerCase();
+  if (!$('#rev').hidden || !$('#flt').hidden) { if (k === 'escape') { $('#rev').hidden = true; $('#flt').hidden = true; } return; }
+  if (k === 'e') decide('exists'); else if (k === 'n') decide('missing'); else if (k === 'd') decide('doubt');
+  else if (k === 'v') toggleSV(); else if (k === 'c') capture();
+  else if (k === 's') $('#skip').click(); else if (k === 'z') $('#undo').click();
+  else if (/^[1-9]$/.test(k)) pick(+k - 1);
+});
+next().catch((e) => show('Error: ' + e.message));
+</script>
+</body>
+</html>
