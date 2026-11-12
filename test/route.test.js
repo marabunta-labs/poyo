@@ -42,3 +42,24 @@ test('un banco que el router no deja en la ruta no se repite sin fin', async () 
   const r = await planRoute({ from: at(0), to: at(1000), limit: 250, sites: [site('x', 200, 60), site('y', 450, 60)], route: stuck });
   assert.equal(r.ok, false);
 });
+
+test('varias restricciones: pide bancos y fuentes en una sola consulta y da un tramo máximo por tipo', async () => {
+  const f = fake();
+  const fuente = (id, e, n = 0) => ({ ...site(id, e, n), type: 'fountain' });
+  const r = await planRoute({ from: at(0), to: at(400), route: f.route, constraints: [
+    { id: 'bench', limit: 350, sites: [site('b', 100, 70)] },
+    { id: 'fountain', limit: 350, sites: [fuente('f', 240, -70)] },
+  ] });
+  assert.deepEqual(r.stops.map((s) => s.type), ['bench', 'fountain']); // en el orden de la ruta
+  assert.deepEqual(Object.keys(r.maxGaps).sort(), ['bench', 'fountain']);
+  assert.equal(f.calls[1].length, 4); // salida, banco, fuente, llegada
+});
+
+test('una restricción cumple y otra no: ok=false y el hueco dice de qué tipo', async () => {
+  const f = fake();
+  const r = await planRoute({ from: at(0), to: at(500), route: f.route, constraints: [
+    { id: 'bench', limit: 300, sites: [site('b', 250)] },
+    { id: 'fountain', limit: 300, sites: [] },
+  ] });
+  assert.equal(r.ok, false); assert.deepEqual([...new Set(r.gaps.map((g) => g.kind))], ['fountain']);
+});

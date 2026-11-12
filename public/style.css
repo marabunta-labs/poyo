@@ -14,6 +14,9 @@ button { font:inherit; cursor:pointer; }
 .fabs button.on { background:var(--green); color:#fff; }
 #map.picking { cursor:crosshair; }
 .rrow { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin:6px 0; }
+a.btn { display:inline-block; text-decoration:none; }
+.rchk { display:flex; align-items:center; gap:6px; font-size:14px; }
+.rchk input { width:auto; padding:0; }
 .rrow b { min-width:60px; }
 .rrow .btn.on { background:var(--green); color:#fff; }
 .rsum { margin:12px 0; font-size:14px; line-height:1.5; }
@@ -80,6 +83,7 @@ input, textarea, select { font:inherit; padding:8px; border:1px solid var(--line
 .rphotos { display:flex; gap:6px; margin-top:6px; flex-wrap:wrap; }
 .rphotos img { height:70px; border-radius:8px; cursor:zoom-in; }
 .link { background:none; border:0; padding:0; color:var(--green); font-weight:700; text-decoration:underline; }
+.cl { border-radius:50%; background:#2f7d4fd9; color:#fff; font-weight:700; font-size:12px; display:grid; place-items:center; border:2px solid #fff; box-shadow:0 1px 6px #0005; cursor:pointer; }
 .badge.demo { background:#fff3cd; color:#7a5b00; }
 .badge { font-size:11px; background:#dff1e5; color:var(--green); border-radius:99px; padding:1px 7px; margin-left:4px; }
 .tabs { display:flex; gap:4px; margin:6px 0 12px; }

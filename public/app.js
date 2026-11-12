@@ -95,11 +95,12 @@ function upsert(p) {
   if (m) { m.setIcon(icon(cur)); m.setZIndexOffset(cur.count ? 1000 : 0); return; }
   const mk = L.marker([cur.lat, cur.lng], { icon: icon(cur), zIndexOffset: cur.count ? 1000 : 0 });
   if (shown(cur)) mk.addTo(map);
-  mk.on('click', () => openPlace(p.id));
+  mk.on('click', () => (route.picking ? pickRoutePoint(cur.lat, cur.lng, cur.name || TYPES[cur.type]) : openPlace(p.id)));
   markers.set(p.id, mk);
 }
 function applyFilters() {
   markers.forEach((mk, id) => (shown(places.get(id)) ? mk.addTo(map) : mk.remove()));
+  if (map.getZoom() < 16) loadOSM(); // los grupos dependen de los tipos visibles
 }
 const chips = $('filters');
 Object.entries(FILTERS).forEach(([k, label]) => chips.append(el('button', { className: 'on', textContent: label, onclick: (e) => {
@@ -130,10 +131,39 @@ map.on('click', () => (viewMenu.hidden = true));
 
 // ---------- datos de OpenStreetMap ----------
 let overpassCtl, osmRetry, osmTries = 0;
+// Zoom 13-15: grupos con el número de sitios (los pide el servidor ya contados); a partir del 16, los sitios uno a uno.
+const clusterLayer = L.layerGroup().addTo(map);
+const KIND_LETTER = { bench: 'b', picnic: 'p', wall: 'b', other: 'b', fountain: 'f', shop: 's' };
+async function loadClusters(b) {
+  const letters = [...new Set(Object.keys(KIND_LETTER).filter((k) => visible.has(GROUP[k])).map((k) => KIND_LETTER[k]))].join('');
+  const qs = new URLSearchParams({ s: b.getSouth(), w: b.getWest(), n: b.getNorth(), e: b.getEast(), z: map.getZoom(), k: letters });
+  overpassCtl?.abort(); overpassCtl = new AbortController();
+  try {
+    const rows = await (await fetch('/api/osm/clusters?' + qs, { signal: overpassCtl.signal })).json();
+    if (!Array.isArray(rows)) throw new Error('osm');
+    clusterLayer.clearLayers();
+    let total = 0;
+    rows.forEach(([lat, lng, n]) => {
+      total += n;
+      const px = 26 + Math.min(22, Math.round(Math.log10(n + 1) * 10));
+      L.marker([lat, lng], { icon: L.divIcon({ className: '', iconSize: [px, px], html: `<div class="cl" style="width:${px}px;height:${px}px">${n}</div>` }) })
+        .on('click', () => map.setView([lat, lng], Math.min(map.getZoom() + 2, 17))).addTo(clusterLayer);
+    });
+    $('status').textContent = t('{n} sitios en esta zona', { n: total });
+  } catch (e) { if (e.name !== 'AbortError') $('status').textContent = t('No se pudo cargar OpenStreetMap · mueve el mapa para reintentar'); }
+}
+function pruneMarkers(b) { // con mucho movimiento se acumulan miles de marcadores: quitamos los sin reseñas que quedan lejos
+  if (markers.size < 2500) return;
+  const keep = b.pad(1);
+  markers.forEach((mk, id) => { const p = places.get(id); if (!p.count && !keep.contains([p.lat, p.lng])) { mk.remove(); markers.delete(id); places.delete(id); } });
+}
 async function loadOSM() {
   clearTimeout(osmRetry);
-  if (map.getZoom() < 16) { $('status').textContent = t('Acércate para ver sitios'); return; }
-  const b = map.getBounds();
+  const z = map.getZoom(), b = map.getBounds();
+  if (z >= 16) clusterLayer.clearLayers();
+  if (z < 13) { $('status').textContent = t('Acércate para ver sitios'); return; }
+  if (z < 16) return loadClusters(b);
+  pruneMarkers(b);
   const qs = new URLSearchParams({ s: b.getSouth(), w: b.getWest(), n: b.getNorth(), e: b.getEast() });
   overpassCtl?.abort();
   overpassCtl = new AbortController();
@@ -158,7 +188,7 @@ async function loadOSM() {
     if (again) osmRetry = setTimeout(loadOSM, 15000);
   }
 }
-let moveTimer; map.on('moveend', () => { clearTimeout(moveTimer); osmTries = 0; moveTimer = setTimeout(loadOSM, 500); });
+let moveTimer; map.on('moveend', () => { clearTimeout(moveTimer); osmTries = 0; moveTimer = setTimeout(loadOSM, 300); });
 
 // ---------- buscador ----------
 // Los resultados salen justo bajo la caja. Al escribir: sitios de Poyo con ese nombre (al instante, sin red);
@@ -493,10 +523,12 @@ function renderPlace(p) {
     };
     c.append(form);
   }
-  c.append(el('button', { className: 'btn', style: 'margin:10px 0', textContent: t('🚶 Ruta hasta aquí'), onclick: () => {
-    route.to = { lat: p.lat, lng: p.lng, label: p.name || TYPES[p.type] }; if (!route.from && userPos) route.from = { ...userPos, label: t('Mi ubicación') };
-    route.result = null; drawRoute(); openRoute();
-  } }));
+  c.append(el('div', { className: 'rrow', style: 'margin:10px 0' },
+    el('button', { className: 'btn', textContent: t('🚶 Ruta hasta aquí'), onclick: () => {
+      route.to = { lat: p.lat, lng: p.lng, label: p.name || TYPES[p.type] }; if (!route.from && userPos) route.from = { ...userPos, label: t('Mi ubicación') };
+      route.result = null; drawRoute(); openRoute();
+    } }),
+    el('a', { className: 'btn', href: `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${p.lat},${p.lng}`, target: '_blank', rel: 'noopener', textContent: t('🔭 Ver en Street View') })));
   if (p.canDelete) c.append(el('button', { className: 'btn danger', style: 'margin:10px 0', textContent: t('Borrar este sitio'), onclick: async () => {
     if (!confirm(t('¿Borrar el sitio y todas sus reseñas?'))) return;
     try { await api('DELETE', '/places/' + p.id); markers.get(p.id)?.remove(); markers.delete(p.id); places.delete(p.id); $('panel').hidden = true; }
@@ -708,13 +740,11 @@ map.on('click', (e) => {
 });
 
 // ---------- ruta con paradas: sin tramos largos sin banco (o sin fuente) ----------
-const route = { from: null, to: null, kind: 'bench', gap: 250, picking: null, result: null, layer: L.layerGroup().addTo(map) };
+const route = { from: null, to: null, kinds: ['bench'], gap: 250, picking: null, result: null, layer: L.layerGroup().addTo(map) };
 const openRoute = () => visit('route', renderRoute);
 const setPicking = (v) => { route.picking = v; $('map').classList.toggle('picking', !!v); };
-map.on('click', (e) => {
-  if (!route.picking) return;
-  route[route.picking] = { lat: e.latlng.lat, lng: e.latlng.lng, label: '' }; setPicking(null); route.result = null; drawRoute(); openRoute();
-});
+const pickRoutePoint = (lat, lng, label = '') => { route[route.picking] = { lat, lng, label }; setPicking(null); route.result = null; drawRoute(); openRoute(); };
+map.on('click', (e) => { if (route.picking) pickRoutePoint(e.latlng.lat, e.latlng.lng); });
 const endIcon = (txt) => L.divIcon({ className: '', html: `<div class="rend">${txt}</div>`, iconSize: [24, 24], iconAnchor: [12, 12] });
 const km = (m) => (m / 1000).toFixed(1);
 function drawRoute() { // origen, destino y, si ya está calculada, la ruta con sus paradas y los tramos largos en rojo
@@ -743,8 +773,10 @@ function renderRoute() {
       } }),
       el('button', { type: 'button', className: 'btn' + (on ? ' on' : ''), textContent: on ? t('Toca el mapa…') : t('Elegir en el mapa'), onclick: () => { setPicking(on ? null : k); renderRoute(); } }));
   };
-  const kind = el('select', {}, el('option', { value: 'bench', textContent: t('🪑 Bancos') }), el('option', { value: 'fountain', textContent: t('💧 Fuentes') }));
-  kind.value = route.kind; kind.onchange = () => { route.kind = kind.value; route.result = null; drawRoute(); renderRoute(); };
+  const kinds = el('div', { className: 'rrow' }, ...[['bench', t('🪑 Bancos')], ['fountain', t('💧 Fuentes')]].map(([k, label]) => el('label', { className: 'rchk' },
+    Object.assign(el('input', { type: 'checkbox', checked: route.kinds.includes(k) }), { onchange: (ev) => {
+      route.kinds = ev.target.checked ? [...route.kinds, k] : route.kinds.filter((x) => x !== k); route.result = null; drawRoute(); renderRoute();
+    } }), label)));
   const gap = el('select', {}, ...[100, 150, 250, 400, 600].map((m) => el('option', { value: m, textContent: t('Máx. {m} m entre paradas', { m }) })));
   gap.value = route.gap; gap.onchange = () => { route.gap = Number(gap.value); route.result = null; drawRoute(); renderRoute(); };
   const err = el('div', { className: 'err' }), out = el('div', { className: 'rsum' });
@@ -753,15 +785,18 @@ function renderRoute() {
     if (!route.from || !route.to) return (err.textContent = t('Elige origen y destino'));
     go.disabled = true; go.textContent = t('Calculando…');
     try {
-      route.result = await api('GET', `/route?from=${route.from.lat},${route.from.lng}&to=${route.to.lat},${route.to.lng}&kind=${route.kind}&gap=${route.gap}`);
+      route.result = await api('GET', `/route?from=${route.from.lat},${route.from.lng}&to=${route.to.lat},${route.to.lng}&kinds=${route.kinds.join(',')}&gap=${route.gap}`);
       drawRoute(); map.fitBounds(L.polyline(route.result.geometry).getBounds(), { padding: [40, 40] }); renderRoute();
     } catch (x) { err.textContent = x.message; go.disabled = false; go.textContent = t('Calcular ruta'); }
   } });
   c.append(el('h2', { textContent: t('Ruta con paradas') }), el('div', { className: 'sub', textContent: t('Una ruta a pie sin tramos largos sin un banco donde sentarte (o una fuente donde beber).') }),
-    where('from', t('Origen')), where('to', t('Destino')), el('div', { className: 'rrow' }, kind, gap), go, err, out);
+    where('from', t('Origen')), where('to', t('Destino')), el('div', { className: 'muted' }, t('Paradas en la ruta (ninguna = ruta normal)')), kinds,
+    route.kinds.length ? el('div', { className: 'rrow' }, gap) : null, go, err, out);
   const r = route.result;
   if (r) {
-    out.append(el('div', { textContent: t('{km} km · {min} min a pie · {n} paradas en la ruta', { km: km(r.distance), min: Math.round(r.duration / 60), n: r.stops.length }) }),
+    out.append(el('div', { textContent: route.kinds.length ? t('{km} km · {min} min a pie · {n} paradas en la ruta', { km: km(r.distance), min: Math.round(r.duration / 60), n: r.stops.length })
+      : t('{km} km · {min} min a pie', { km: km(r.distance), min: Math.round(r.duration / 60) }) }));
+    if (route.kinds.length) out.append(
       el('div', { className: r.ok ? 'okk' : 'warn', textContent: r.ok ? t('✅ Ningún tramo supera {m} m', { m: route.gap }) : t('⚠️ Tramos de más de {m} m sin dónde parar: {n} (con los sitios conocidos)', { n: r.gaps.length, m: route.gap }) }),
       el('div', { className: 'muted', textContent: t('Mayor tramo sin parada: {m} m', { m: r.maxGap }) }));
     out.append(el('button', { className: 'btn', style: 'margin-top:8px', textContent: t('Quitar ruta'), onclick: () => { route.result = null; route.from = route.to = null; drawRoute(); renderRoute(); } }));

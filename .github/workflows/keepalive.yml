@@ -1,0 +1,10 @@
+# Render (plan gratuito) duerme el servicio tras ~15 min sin visitas y tarda ~40 s en despertar. Este ping cada 10 min lo evita.
+name: poyo-keepalive
+on:
+  schedule: [{ cron: '*/10 * * * *' }]
+  workflow_dispatch:
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -fsS -m 90 https://poyo-megc.onrender.com/api/config > /dev/null

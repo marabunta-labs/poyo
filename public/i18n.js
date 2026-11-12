@@ -3,6 +3,7 @@
 const LANGS = { es: 'Español', en: 'English' };
 const DICT = { en: {
   // tipos y filtros
+  '{km} km · {min} min a pie': '{km} km · {min} min on foot', 'Paradas en la ruta (ninguna = ruta normal)': 'Stops on the route (none = normal route)', '🔭 Ver en Street View': '🔭 View on Street View',
   'demo': 'demo', 'Cuenta de ejemplo: no es una persona real': 'Sample account: not a real person',
   '🚶 Ruta': '🚶 Route', 'Ruta con paradas': 'Route with rest stops', 'Una ruta a pie sin tramos largos sin un banco donde sentarte (o una fuente donde beber).': 'A walking route with no long stretches without a bench to sit on (or a fountain to drink from).',
   'Origen': 'From', 'Destino': 'To', 'Sin elegir': 'Not set', 'Elegir en el mapa': 'Pick on the map', 'Toca el mapa…': 'Tap the map…', 'No se pudo obtener tu ubicación': 'Could not get your location',
