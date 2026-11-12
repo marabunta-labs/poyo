@@ -17,6 +17,7 @@ node scripts/import-osm.js                         # España entera (descarga ~1
 node scripts/import-osm.js <url|fichero.pbf> --name francia   # otra región (https://download.geofabrik.de)
 ```
 Genera `DATA_DIR/osm/<nombre>.json`; reinicia el servidor para cargarlo. Repítelo de vez en cuando (p. ej. cada mes) para refrescar.
+Se hace solo: el workflow `refresh-osm.yml` lo ejecuta el día 1 de cada mes (o a mano con `gh workflow run refresh-osm.yml`), compara con el volcado anterior y, si cambió, sube `data/osm/spain.json.gz` a `main` (Render redespliega). El resumen de sitios nuevos y quitados queda en la ejecución y en el commit.
 En Docker: `docker exec <contenedor> node scripts/import-osm.js`. Las zonas sin volcado usan Overpass como respaldo (con caché en disco).
 
 ## Rutas con paradas

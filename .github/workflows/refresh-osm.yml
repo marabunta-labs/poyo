@@ -1,13 +1,11 @@
-# Cada mes baja España de Geofabrik, regenera data/osm/spain.json.gz y abre una pull request con el resumen de sitios
-# nuevos y quitados. Al aceptarla, Render redespliega con el volcado nuevo. (Ajustes del repo → Actions → «Allow GitHub
-# Actions to create and approve pull requests» debe estar activado.)
+# Cada mes baja España de Geofabrik, regenera data/osm/spain.json.gz y, si cambió, lo sube a main (Render redespliega).
+# El resumen de sitios nuevos y quitados queda en el resumen de la ejecución y en el mensaje del commit.
 name: poyo-refresh-osm
 on:
   schedule: [{ cron: '0 5 1 * *' }]   # día 1 de cada mes, 05:00 UTC
   workflow_dispatch:
 permissions:
   contents: write
-  pull-requests: write
 jobs:
   refresh:
     runs-on: ubuntu-latest
@@ -23,11 +21,12 @@ jobs:
           node scripts/osm-diff.js data/osm/spain.json.gz "$RUNNER_TEMP/data/osm/spain.json" > "$RUNNER_TEMP/resumen.md"
           cat "$RUNNER_TEMP/resumen.md" >> "$GITHUB_STEP_SUMMARY"
           gzip -9 -c "$RUNNER_TEMP/data/osm/spain.json" > data/osm/spain.json.gz
-      - uses: peter-evans/create-pull-request@v6
-        with:
-          branch: osm-refresh
-          add-paths: data/osm/spain.json.gz
-          title: Actualiza el volcado de OpenStreetMap
-          commit-message: Actualiza el volcado de OpenStreetMap
-          body-path: ${{ runner.temp }}/resumen.md
-          delete-branch: true
+      - name: Subir a main si cambió
+        run: |
+          git config user.name poyo-bot
+          git config user.email poyo-bot@users.noreply.github.com
+          git add data/osm/spain.json.gz
+          git diff --cached --quiet && { echo 'Sin cambios'; exit 0; }
+          git commit -m 'Actualiza el volcado de OpenStreetMap' -m "$(cat "$RUNNER_TEMP/resumen.md")"
+          git pull --rebase origin main
+          git push origin HEAD:main
