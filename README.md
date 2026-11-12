@@ -27,7 +27,8 @@ Capas (menú 🗺️): **Claro** y **Color** (vectoriales de [OpenFreeMap](https
 Evita CARTO: desde 2025 exige clave y pone una marca de agua.
 
 ## Datos y cuentas (Supabase)
-Poyo no guarda nada en disco: los datos viven en el esquema `poyo` del proyecto de Supabase compartido por las apps de Marabunta Labs (ver `../marabunta-db/README.md`).
+Poyo no guarda nada en disco: los datos viven en el esquema `poyo` del proyecto de Supabase compartido por las apps de Marabunta Labs (repo privado `marabunta-db`).
+El esquema completo está en [`supabase/schema.sql`](supabase/schema.sql): para montar Poyo con tu propio proyecto de Supabase, ejecútalo en el SQL Editor, pon la contraseña de `poyo_app` (`alter role poyo_app with password '…'`) y úsala en `DATABASE_URL`. Si cambias el esquema, actualiza también `marabunta-db/sql/50_poyo.sql`.
 - **Cuentas:** Supabase Auth (email + contraseña, o Google). Es la **cuenta común de Marabunta Labs**: quien ya la tenga en otra app entra con la misma. Poyo solo guarda un perfil (`@usuario`, bio, avatar).
 - **Datos:** `poyo.profiles / places / reviews / friendships / reports`. El servidor entra con un rol (`poyo_app`) que solo ve ese esquema.
 - **Fotos:** el navegador las reduce (≤1080 px, ~100 KB) y las sube a Supabase Storage (`poyo-photos`, carpeta `<uid>/`). Borrarlas de Storage lo hace `scripts/purge-photos.js` (el servidor no tiene permiso).
@@ -44,7 +45,7 @@ Poyo no guarda nada en disco: los datos viven en el esquema `poyo` del proyecto 
 | `ADMINS` | Usernames moderadores, separados por comas (ej. `pablo,ana`). Ven la pestaña **Mod**, pueden borrar cualquier reseña/sitio y expulsar usuarios de Poyo |
 | `TRUST_PROXY=1` | Usa `X-Forwarded-For` para el límite de peticiones (detrás de un proxy) |
 
-`npm install && npm start`. Pruebas: `DATABASE_URL=… ADMIN_DATABASE_URL=… node --test test/api.test.js` (necesita el Postgres local de `../marabunta-db/test/run_local.sh`) y `node --test test/i18n.test.js`.
+`npm install && npm start`. Pruebas: `DATABASE_URL=… ADMIN_DATABASE_URL=… node --test test/api.test.js` (necesita un Postgres con Supabase, p. ej. la imagen `supabase/postgres`, con `supabase/schema.sql` aplicado y un `poyo_app` con contraseña) y `node --test test/i18n.test.js`.
 
 ## Desplegar (Render)
 Poyo está en Render (plan gratuito, Frankfurt): https://poyo-megc.onrender.com/. Se define en `render.yaml` (Blueprint: *New → Blueprint* y elige este repo); solo hay que pegar los secretos `DATABASE_URL`, `SUPABASE_ANON_KEY` y `ADMINS`. Render comprueba `/api/config` y redespliega con cada push.
