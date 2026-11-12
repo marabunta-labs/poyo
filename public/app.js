@@ -283,6 +283,7 @@ const photoStrip = (files, cls) => files?.length
   ? el('div', { className: cls }, ...files.map((f) => el('img', { src: photoUrl(f), loading: 'lazy', onclick: () => lightbox(photoUrl(f)) })))
   : null;
 const userLink = (name) => el('button', { className: 'link', textContent: name, onclick: () => openProfile(name) });
+const BADGES = { early: t('🌅 Madrugador'), sunset: t('🌇 Rey del atardecer'), loyal: t('📆 Fiel 30 días'), explorer: t('🧭 Explorador') };
 const demoBadge = () => !me?.isAdmin ? null : el('span', { className: 'badge demo', textContent: t('demo'), title: t('Cuenta de ejemplo: no es una persona real') });
 const whoLine = (r, noDate) => el('div', { className: 'who' }, el('button', { className: 'plain', onclick: () => openProfile(r.author) }, avatarEl(r, 28)),
   userLink(r.author), r.isSeed ? demoBadge() : null, r.byFriend ? el('span', { className: 'badge', textContent: t('amigo') }) : null,
@@ -413,6 +414,12 @@ function openNewPassword() {
 function setMe(u) {
   me = u; $('nav-me').title = u ? t('Mi perfil y mis reseñas') : t('Entrar o crear cuenta');
   $('nav-me').replaceChildren(...(u ? [avatarEl(u, 22), u.username] : [t('👤 Entrar')]));
+  refreshGameAlert();
+}
+async function refreshGameAlert() { // «🏴 Juego ⚠️2»: bases de mi grupo en peligro
+  let n = 0;
+  if (me && !me.needsProfile) { try { n = (await api('GET', '/groups/mine'))?.atRisk || 0; } catch {} }
+  $('nav-game').textContent = t('🏴 Juego') + (n ? ` ⚠️${n}` : '');
 }
 async function requireLogin(msg) { if (!me) { openAccount(msg); return false; } return true; }
 $('nav-me').onclick = () => (me ? openProfile(me.username) : openAccount());
@@ -595,6 +602,7 @@ async function loadProfile(username) {
     bio.onchange = () => api('PUT', '/me', { bio: bio.value }).then(setMe);
     c.append(bio);
   } else if (u.bio) c.append(el('p', { textContent: u.bio }));
+  if (u.badges?.length) c.append(el('div', { className: 'crits' }, ...u.badges.map((b) => el('span', { className: 'badge', textContent: BADGES[b] }))));
   const stat = (n, label) => el('div', {}, el('b', { textContent: n }), label);
   c.append(el('div', { className: 'stats' }, stat(u.reviewCount, t('reseñas')), stat(u.photoCount, t('fotos')),
     stat(u.avg ?? '–', t('nota media')), stat(u.friendCount, t('amigos'))));
@@ -769,10 +777,12 @@ map.on('click', (e) => {
 
 // ---------- juego de bases: mi grupo y rankings ----------
 const openGame = async () => { if (await requireLogin(t('Inicia sesión para jugar'))) visit('game', loadGame); };
+let rankZone = false; // ranking de toda España o solo de la zona visible del mapa
 async function loadGame() {
   const c = content(), vid = viewId;
   let g, rk;
-  try { [g, rk] = await Promise.all([api('GET', '/groups/mine'), api('GET', '/game/ranking')]); }
+  const bb = map.getBounds(), zone = rankZone ? `?s=${bb.getSouth()}&w=${bb.getWest()}&n=${bb.getNorth()}&e=${bb.getEast()}` : '';
+  try { [g, rk] = await Promise.all([api('GET', '/groups/mine'), api('GET', '/game/ranking' + zone)]); }
   catch (x) { c.append(el('div', { className: 'err', textContent: x.message })); return; }
   if (stale(vid)) return;
   const dot = (col) => el('span', { className: 'dot', style: `background:${col}` });
@@ -784,7 +794,7 @@ async function loadGame() {
       el('div', { textContent: t('Código para invitar: {code}', { code: g.code }) }),
       el('h4', { textContent: t('Miembros') }), ...g.members.map(userRow),
       el('h4', { textContent: t('Vuestras bases') }),
-      ...(g.bases.length ? g.bases.map((b) => resRow(`${EMOJI[b.type]} ${b.name || TYPES[b.type]}`, () => { $('panel').hidden = true; goTo(b.lat, b.lng, b.id); }))
+      ...(g.bases.length ? g.bases.map((b) => resRow(`${b.danger ? '⚠️ ' : ''}${EMOJI[b.type]} ${b.name || TYPES[b.type]}${b.danger ? ' · ' + t('en peligro: {a} vs {b} pts', { a: b.score, b: b.rival }) : ''}`, () => { $('panel').hidden = true; goTo(b.lat, b.lng, b.id); }))
         : [el('p', { className: 'muted', textContent: t('Todavía sin bases: haced check-in en un banco cercano.') })]),
       el('button', { className: 'btn danger', style: 'margin:10px 0', textContent: t('Salir del grupo'), onclick: async () => {
         if (confirm(t('¿Salir del grupo?'))) { await api('POST', '/groups/leave'); loadGame(); }
@@ -797,7 +807,10 @@ async function loadGame() {
       el('h3', { textContent: t('Unirme con un código') }),
       el('form', { onsubmit: post('/groups/join', () => ({ code: code.value })) }, code, el('button', { className: 'submit', textContent: t('Unirme') })), err);
   }
-  c.append(el('h3', { textContent: t('Ranking (14 días)') }), el('h4', { textContent: t('Grupos') }),
+  c.append(el('h3', { textContent: t('Ranking (14 días)') }),
+    el('div', { className: 'rrow' }, ...[[false, t('España')], [true, t('Esta zona del mapa')]].map(([z, label]) =>
+      el('button', { className: 'btn' + (rankZone === z ? ' on' : ''), textContent: label, onclick: () => { rankZone = z; loadGame(); } }))),
+    el('h4', { textContent: t('Grupos') }),
     ...(rk.groups.length ? rk.groups.map((x, i) => el('div', { className: 'rk' }, dot(x.color), ` ${i + 1}. `, el('b', { textContent: x.name }),
       el('small', { className: 'muted', textContent: ' · ' + t('{n} pts · {b} bases · {m} miembros', { n: x.score, b: x.bases, m: x.members }) })))
       : [el('p', { className: 'muted', textContent: t('Aún no hay check-ins') })]),

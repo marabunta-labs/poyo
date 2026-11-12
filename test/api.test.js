@@ -130,6 +130,27 @@ test('juego de bases: grupos, check-in, control y antitrampas', async () => {
   assert.equal((await call('GET', '/groups/mine', null, 'ana')).body, null);
 });
 
+test('juego: ranking por zona, bases en peligro e insignias', async () => {
+  await call('POST', '/groups/leave', null, 'cris'); // Cris sigue en «Rivales» del test anterior
+  const place = { lat: 37.3, lng: -3.7, name: 'Banco zona', type: 'bench' };
+  const ck = { lat: 37.3, lng: -3.7, accuracy: 5, place };
+  assert.equal((await call('POST', '/groups', { name: 'Zona' }, 'ana')).status, 201);
+  const rival = (await call('POST', '/groups', { name: 'Rival Zona' }, 'cris')).body;
+  assert.equal((await call('POST', '/places/osm-910/checkin', ck, 'ana')).status, 201);
+  await admin.query(`insert into poyo.checkins (place_id, user_id, group_id, lat, lng, points, day, at) values ('osm-910', $1, $2, 37.3, -3.7, 9, current_date - 2, now() - interval '2 days')`, [users.cris.id, rival.id]);
+  const mine = (await call('GET', '/groups/mine', null, 'ana')).body;
+  assert.equal(mine.atRisk, 1); assert.equal(mine.bases[0].danger, true); assert.ok(mine.bases[0].rival > mine.bases[0].score);
+  const inZone = (await call('GET', '/game/ranking?s=37.2&w=-3.8&n=37.4&e=-3.6')).body;
+  assert.deepEqual(inZone.groups.map((g) => g.name).sort(), ['Rival Zona', 'Zona']);
+  const far = (await call('GET', '/game/ranking?s=0&w=0&n=1&e=1')).body;
+  assert.deepEqual([far.groups.length, far.users.length], [0, 0]);
+  assert.deepEqual((await call('GET', '/users/Ana.G')).body.badges, []);
+  await admin.query(`insert into poyo.checkins (place_id, user_id, group_id, lat, lng, points, day, at)
+    select 'osm-910', $1, $2, 37.3, -3.7, 1, current_date - n, (current_date - n + time '07:30') at time zone 'Europe/Madrid' from generate_series(1, 5) n`, [users.ana.id, mine.id]);
+  assert.deepEqual((await call('GET', '/users/Ana.G')).body.badges, ['early']);
+  await call('POST', '/groups/leave', null, 'ana'); await call('POST', '/groups/leave', null, 'cris');
+});
+
 test('amistades: solicitud, aceptar, rechazo, feed y perfil', async () => {
   assert.equal((await call('POST', '/friends/beto', null, 'ana')).body.relation, 'sent');
   { const x = await call('POST', '/friends/Ana.G', null, 'beto'); assert.equal(x.body.relation, 'friends', JSON.stringify(x)); } // beto acepta

@@ -3,6 +3,8 @@
 const LANGS = { es: 'Español', en: 'English' };
 const DICT = { en: {
   // tipos y filtros
+  '🌅 Madrugador': '🌅 Early bird', '🌇 Rey del atardecer': '🌇 Sunset king', '📆 Fiel 30 días': '📆 Loyal 30 days', '🧭 Explorador': '🧭 Explorer',
+  'en peligro: {a} vs {b} pts': 'in danger: {a} vs {b} pts', 'España': 'Spain', 'Esta zona del mapa': 'This map area',
   'Inicia sesión para jugar': 'Sign in to play',
   '🏴 Juego': '🏴 Game',
   '🏴 Juego de bases': '🏴 Base game',

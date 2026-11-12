@@ -339,12 +339,27 @@ const myGroupId = async (me) => (await q1('select group_id from poyo.group_membe
 async function groupView(id) {
   const g = await q1('select id, name, color, code from poyo.groups where id = $1', [id]);
   const members = await q('select u.id, u.username, u.bio, u.avatar, u.is_seed from poyo.group_members m join poyo.profiles u on u.id = m.user_id where m.group_id = $1 order by m.joined_at', [id]);
-  const bases = await q(`select p.id, p.name, p.type, p.lat, p.lng from poyo.place_control pc join poyo.places p on p.id = pc.place_id where pc.group_id = $1 order by pc.since desc limit 30`, [id]);
+  const W = (extra) => `select sum(${WEIGHT}) from poyo.checkins c where c.place_id = pc.place_id and c.at > now() - interval '${GAME.days} days' and ${extra}`;
+  const bases = (await q(`select p.id, p.name, p.type, p.lat, p.lng, coalesce((${W('c.group_id = pc.group_id')}), 0)::float as score,
+      coalesce((select max(s) from (${W('c.group_id <> pc.group_id').replace('select sum', 'select c.group_id, sum')} group by c.group_id) x(g, s)), 0)::float as rival
+    from poyo.place_control pc join poyo.places p on p.id = pc.place_id where pc.group_id = $1 order by pc.since desc limit 30`, [id]))
+    .map((b) => ({ ...b, score: Math.round(b.score * 10) / 10, rival: Math.round(b.rival * 10) / 10, danger: b.rival > 0 && b.rival >= b.score * GAME.rival * 0.8 }))
+    .sort((x, y) => y.danger - x.danger); // las que peligran, primero
   const pts = await q1(`select coalesce(sum(${WEIGHT}), 0)::float as s from poyo.checkins c where c.group_id = $1 and c.at > now() - interval '${GAME.days} days'`, [id]);
-  return { ...g, members: members.map(publicUser), bases, score: Math.round(pts.s * 10) / 10 };
+  return { ...g, members: members.map(publicUser), bases, atRisk: bases.filter((b) => b.danger).length, score: Math.round(pts.s * 10) / 10 };
 }
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const newCode = () => Array.from(crypto.randomBytes(6), (b) => CODE_CHARS[b % CODE_CHARS.length]).join('');
+
+// Insignias: se calculan al vuelo con los check-ins de la persona (zona horaria de Madrid)
+async function badgesOf(userId) {
+  const s = await q1(`select count(distinct place_id)::int as places,
+      count(distinct day) filter (where at > now() - interval '30 days')::int as days30,
+      count(*) filter (where extract(hour from at at time zone 'Europe/Madrid') < 9)::int as early,
+      count(*) filter (where extract(hour from at at time zone 'Europe/Madrid') between 19 and 21)::int as sunset
+    from poyo.checkins where user_id = $1`, [userId]);
+  return [s.early >= 5 && 'early', s.sunset >= 5 && 'sunset', s.days30 >= 10 && 'loyal', s.places >= 10 && 'explorer'].filter(Boolean);
+}
 
 // ---------- rutas ----------
 async function relation(meId, otherId) {
@@ -441,12 +456,14 @@ async function api(req, res, url) {
   }
 
   // --- juego de bases ---
-  if (isGet && a === 'game' && b === 'ranking') {
+  if (isGet && a === 'game' && b === 'ranking') { // s,w,n,e opcionales: solo los check-ins de bancos dentro de esa zona
+    const bb = ['s', 'w', 'n', 'e'].map((k) => Number(url.searchParams.get(k))), zoned = url.searchParams.has('s') && bb.every(Number.isFinite);
+    const zone = zoned ? ' and c.place_id in (select id from poyo.places where lat between $1 and $3 and lng between $2 and $4)' : '', zp = zoned ? bb : [];
     const groups = await q(`select g.id, g.name, g.color, (select count(*)::int from poyo.group_members m where m.group_id = g.id) as members,
         (select count(*)::int from poyo.place_control pc where pc.group_id = g.id) as bases, round(sum(${WEIGHT})::numeric, 1)::float as score
-      from poyo.groups g join poyo.checkins c on c.group_id = g.id where c.at > now() - interval '${GAME.days} days' group by g.id order by score desc limit 20`);
+      from poyo.groups g join poyo.checkins c on c.group_id = g.id where c.at > now() - interval '${GAME.days} days'${zone} group by g.id order by score desc limit 20`, zp);
     const users = await q(`select u.id, u.username, u.bio, u.avatar, u.is_seed, sum(c.points)::int as points from poyo.checkins c join poyo.profiles u on u.id = c.user_id
-      where c.at > now() - interval '${GAME.days} days' group by u.id order by points desc, u.username limit 20`);
+      where c.at > now() - interval '${GAME.days} days'${zone} group by u.id order by points desc, u.username limit 20`, zp);
     return send(res, 200, { groups, users: users.map((u) => ({ ...publicUser(u), points: u.points })) });
   }
   if (a === 'groups') {
@@ -524,7 +541,7 @@ async function api(req, res, url) {
     const friends = await q(`select u2.id, u2.username, u2.bio, u2.avatar, u2.is_seed from poyo.profiles u2 where u2.id in (${friendIdsSql}) order by u2.username limit 30`, [u.id]);
     const fcount = await q1(`select count(*)::int as n from (${friendIdsSql}) x`, [u.id]);
     return send(res, 200, {
-      ...publicUser(u), joined: (await q1('select created_at from poyo.profiles where id = $1', [u.id])).created_at, relation: await relation(me?.id, u.id),
+      ...publicUser(u), badges: await badgesOf(u.id), joined: (await q1('select created_at from poyo.profiles where id = $1', [u.id])).created_at, relation: await relation(me?.id, u.id),
       friendCount: fcount.n, reviewCount: st.n, avg: st.avg, photoCount: st.photos,
       friends: friends.map(publicUser), reviews: rev.slice(0, 50).map((r) => shapeReview(r, true)),
     });
