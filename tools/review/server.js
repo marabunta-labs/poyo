@@ -24,6 +24,7 @@ fs.mkdirSync(CROPS, { recursive: true });
 
 // [sur, oeste, norte, este]
 const ZONES = {
+  todas: [36.0, -9.0, 44.0, 4.0],
   granada: [37.12, -3.65, 37.22, -3.55],
   madrid: [40.35, -3.78, 40.50, -3.60],
   barcelona: [41.32, 2.07, 41.47, 2.23],
@@ -57,7 +58,14 @@ const ALL = dump.items.map(([id, lat, lng, kind, name]) => ({ id, lat, lng, kind
 const byId = new Map(ALL.map((p) => [p.id, p]));
 const inBox = (p, [s, w, n, e]) => p.lat >= s && p.lat <= n && p.lng >= w && p.lng <= e;
 const zoneCache = {};
-const zoneItems = (z) => (zoneCache[z] ??= ALL.filter((p) => inBox(p, ZONES[z])));
+const zoneItems = (z) => (zoneCache[z] ??= ALL.filter((p) => {
+  if (z === 'todas') {
+    // Si es "todas", comprobamos si el sitio está dentro de CUALQUIERA de las otras ciudades
+    return Object.entries(ZONES).some(([name, box]) => name !== 'todas' && inBox(p, box));
+  }
+  // Si es una ciudad concreta, funciona como antes
+  return inBox(p, ZONES[z]);
+}));
 console.log(`${ALL.length} sitios en el volcado, ${Object.keys(verdicts).length} ya revisados. Zona inicial: ${DEFAULT_ZONE}`);
 
 // Filtro de la petición: ?zone=granada&kinds=bf&bbox=s,w,n,e&radius=100
