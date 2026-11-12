@@ -18,6 +18,13 @@ const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || ''; // clave pública
 const BUCKET = 'poyo-photos';
 const TYPES = ['bench', 'picnic', 'wall', 'other', 'fountain', 'shop'];
 const MAX_PHOTOS = 3;
+// Criterios de la reseña según el tipo de sitio (opcionales, 1-5). Las etiquetas están en el cliente.
+const CRITERIA = {
+  bench: ['views', 'comfort', 'access', 'shade', 'calm'], picnic: ['comfort', 'space', 'clean', 'shade'],
+  wall: ['comfort', 'views'], other: ['comfort', 'views'], fountain: ['flow', 'clean', 'pets'], shop: ['hours', 'price', 'catalog', 'service'],
+};
+const validRatings = (type, raw) => Object.fromEntries(Object.entries(raw && typeof raw === 'object' ? raw : {})
+  .map(([k, v]) => [k, Math.round(Number(v))]).filter(([k, v]) => (CRITERIA[type] || []).includes(k) && v >= 1 && v <= 5));
 
 if (!process.env.DATABASE_URL || !SUPABASE_URL || !SUPABASE_ANON_KEY) {
   console.error('Faltan DATABASE_URL, SUPABASE_URL o SUPABASE_ANON_KEY (ver README).');
@@ -95,7 +102,7 @@ const photoOk = (p, userId) => typeof p === 'string' && p.startsWith(userId + '/
 const trash = (paths) => paths?.length ? q('insert into poyo.photo_trash (path) select unnest($1::text[]) on conflict do nothing', [paths]) : null;
 
 // ---------- sitios y reseñas ----------
-const REVIEW_SQL = `select r.id, r.user_id as _uid, r.place_id as "placeId", r.rating, r.text, r.photos, r.created_at as "createdAt",
+const REVIEW_SQL = `select r.id, r.user_id as _uid, r.place_id as "placeId", r.rating, r.ratings, r.text, r.photos, r.created_at as "createdAt",
     u.username as author, u.avatar,
     json_build_object('id', p.id, 'name', p.name, 'type', p.type, 'lat', p.lat, 'lng', p.lng) as place
   from poyo.reviews r join poyo.profiles u on u.id = r.user_id join poyo.places p on p.id = r.place_id`;
@@ -271,7 +278,7 @@ async function api(req, res, url) {
   if (!isGet && limited(ip)) fail(429, 'Demasiadas peticiones, espera un minuto');
 
   // --- configuración pública para el navegador (supabase-js) ---
-  if (isGet && a === 'config') return send(res, 200, { supabaseUrl: SUPABASE_URL, supabaseAnonKey: SUPABASE_ANON_KEY, bucket: BUCKET });
+  if (isGet && a === 'config') return send(res, 200, { supabaseUrl: SUPABASE_URL, supabaseAnonKey: SUPABASE_ANON_KEY, bucket: BUCKET, criteria: CRITERIA });
   if (isGet && a === 'osm') return send(res, 200, await osm(url));
   if (isGet && a === 'geocode') return send(res, 200, await geocode(url));
 
@@ -331,14 +338,15 @@ async function api(req, res, url) {
       await q('insert into poyo.places (id, lat, lng, name, type) values ($1, $2, $3, $4, $5) on conflict do nothing', [v.id, v.lat, v.lng, v.name, v.type]);
     }
     const rating = Math.round(Number(body.rating));
+    const ratings = validRatings((await q1('select type from poyo.places where id = $1', [b])).type, body.ratings);
     if (!(rating >= 1 && rating <= 5)) fail(400, 'La nota va de 1 a 5');
     const photos = (Array.isArray(body.photos) ? body.photos : []).slice(0, MAX_PHOTOS).filter((f) => photoOk(f, me.id));
     const prev = await q1('select photos from poyo.reviews where place_id = $1 and user_id = $2', [b, me.id]);
     if (prev && photos.length) await trash(prev.photos.filter((f) => !photos.includes(f)));
-    await q(`insert into poyo.reviews (place_id, user_id, rating, text, photos) values ($1, $2, $3, $4, $5)
-      on conflict (place_id, user_id) do update set rating = excluded.rating, text = excluded.text, created_at = now(),
+    await q(`insert into poyo.reviews (place_id, user_id, rating, ratings, text, photos) values ($1, $2, $3, $4, $5, $6)
+      on conflict (place_id, user_id) do update set rating = excluded.rating, ratings = excluded.ratings, text = excluded.text, created_at = now(),
         photos = case when cardinality(excluded.photos) > 0 then excluded.photos else poyo.reviews.photos end`,
-      [b, me.id, rating, clean(body.text, 600), photos]);
+      [b, me.id, rating, ratings, clean(body.text, 600), photos]);
     return send(res, 201, await placeStats(b));
   }
 

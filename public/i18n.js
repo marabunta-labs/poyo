@@ -3,6 +3,9 @@
 const LANGS = { es: 'Español', en: 'English' };
 const DICT = { en: {
   // tipos y filtros
+  'Vistas': 'Views', 'Comodidad': 'Comfort', 'Accesibilidad': 'Accessibility', 'Sombra': 'Shade', 'Tranquilidad': 'Peace and quiet',
+  'Espacio': 'Space', 'Limpieza': 'Cleanliness', 'Caudal': 'Water flow', 'Apta para mascotas': 'Pet-friendly', 'Horario': 'Opening hours',
+  'Precio': 'Price', 'Catálogo': 'Range of products', 'Atención': 'Service', 'Detalles (opcional)': 'Details (optional)',
   'Banco': 'Bench', 'Mesa de pícnic': 'Picnic table', 'Muro / escalón': 'Wall / step', 'Otro': 'Other', 'Fuente': 'Fountain',
   'Tienda de alimentación': 'Grocery shop', '🪑 Sentarse': '🪑 Seating', '💧 Fuentes': '💧 Fountains', '🛒 Tiendas': '🛒 Shops',
   // mapa y capas

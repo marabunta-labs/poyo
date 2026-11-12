@@ -25,6 +25,10 @@ input, textarea, select { font:inherit; padding:8px; border:1px solid var(--line
 .pick button { border:0; background:none; padding:0; color:#ccc; line-height:1; }
 .pick button.on { color:#e0a100; }
 .submit { background:var(--green); color:#fff; border:0; border-radius:8px; padding:10px; font-weight:600; }
+.crit { display:flex; justify-content:space-between; align-items:center; font-size:14px; margin:2px 0; }
+.crit button { border:0; background:none; padding:0 1px; color:#ccc; font-size:20px; line-height:1; }
+.crit button.on { color:#e0a100; }
+.crits { display:flex; flex-wrap:wrap; gap:4px 10px; font-size:12px; opacity:.8; margin:4px 0; }
 .review { border-top:1px solid var(--line); padding:10px 0; }
 .review b { font-size:14px; }
 .review time { font-size:12px; opacity:.6; margin-left:6px; }

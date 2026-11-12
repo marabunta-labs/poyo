@@ -66,6 +66,17 @@ test('reseñas: crear, editar, validar fotos, estadísticas', async () => {
   assert.equal((await call('GET', '/places')).body.length, 1);
 });
 
+test('reseñas: categorías por tipo (solo las válidas, 1-5)', async () => {
+  const place = { lat: 37.17, lng: -3.6, name: 'Banco del Genil', type: 'bench' };
+  const r = await call('POST', '/places/osm-778/reviews', { rating: 4, ratings: { calm: 5, views: 9, price: 3, comfort: '4' }, place }, 'cris');
+  assert.equal(r.status, 201);
+  const mine = (await call('GET', '/places/osm-778', null, 'cris')).body.reviews.find((x) => x.author === 'cris');
+  assert.deepEqual(mine.ratings, { calm: 5, comfort: 4 }); // 'views' fuera de rango y 'price' no es de bancos
+  const none = await call('POST', '/places/osm-778/reviews', { rating: 3, place }, 'cris'); // sin categorías: se vacían
+  assert.equal(none.status, 201);
+  assert.deepEqual((await call('GET', '/places/osm-778', null, 'cris')).body.reviews.find((x) => x.author === 'cris').ratings, {});
+});
+
 test('amistades: solicitud, aceptar, rechazo, feed y perfil', async () => {
   assert.equal((await call('POST', '/friends/beto', null, 'ana')).body.relation, 'sent');
   { const x = await call('POST', '/friends/Ana.G', null, 'beto'); assert.equal(x.body.relation, 'friends', JSON.stringify(x)); } // beto acepta

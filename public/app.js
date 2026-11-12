@@ -9,6 +9,9 @@ const el = (tag, props = {}, ...kids) => {
   kids.forEach((k) => k != null && k !== false && n.append(k));
   return n;
 };
+const CRIT = { views: t('Vistas'), comfort: t('Comodidad'), access: t('Accesibilidad'), shade: t('Sombra'), calm: t('Tranquilidad'),
+  space: t('Espacio'), clean: t('Limpieza'), flow: t('Caudal'), pets: t('Apta para mascotas'), hours: t('Horario'), price: t('Precio'),
+  catalog: t('Catálogo'), service: t('Atención') }; // qué criterios tiene cada tipo: cfg.criteria (lo define el servidor)
 const stars = (n) => '★'.repeat(Math.round(n)) + '☆'.repeat(5 - Math.round(n));
 let cfg = null, sb = null; // configuración pública y cliente de Supabase (cuentas y fotos), se cargan al arrancar
 const photoUrl = (f) => `${cfg.supabaseUrl}/storage/v1/object/public/${cfg.bucket}/${f}`;
@@ -268,12 +271,16 @@ function reviewActions(r, refresh) {
   } });
 }
 
+const critChips = (ratings) => Object.keys(ratings || {}).length
+  ? el('div', { className: 'crits' }, ...Object.entries(ratings).filter(([k]) => CRIT[k]).map(([k, v]) => el('span', { textContent: `${CRIT[k]} ${v}★` }))) : null;
+
 function reviewRow(r, showPlace, refresh) {
   return el('div', { className: 'review' },
     showPlace ? null : whoLine(r),
     el('span', { className: 'stars', textContent: stars(r.rating) }), showPlace ? el('time', { textContent: new Date(r.createdAt).toLocaleDateString(LOCALE) }) : null,
     showPlace && r.place ? el('div', {}, el('button', { className: 'link', textContent: (EMOJI[r.place.type] || '') + ' ' + (r.place.name || TYPES[r.place.type]),
       onclick: () => { map.setView([r.place.lat, r.place.lng], 18); openPlace(r.placeId); } })) : null,
+    critChips(r.ratings),
     r.text ? el('p', { textContent: r.text }) : null,
     photoStrip(r.photos, 'rphotos'),
     reviewActions(r, refresh));
@@ -407,12 +414,25 @@ function shrink(file) {
 }
 
 // Campos de una reseña (nota, texto, fotos). Se usan al reseñar un sitio y al crear uno nuevo.
-function reviewFields(mine) {
-  let rating = 0; const files = [];
+function reviewFields(mine, type) {
+  let rating = 0; const files = [], crit = { ...mine?.ratings };
   const btns = [1, 2, 3, 4, 5].map((n) => el('button', { type: 'button', textContent: '★', onclick: () => {
     rating = n; btns.forEach((b, i) => b.classList.toggle('on', i < n));
   } }));
   if (mine) btns[mine.rating - 1].click();
+  const critBox = el('div', { className: 'critbox' });
+  const setType = (tp) => { // criterios opcionales del tipo de sitio; tocar la misma nota otra vez la quita
+    type = tp;
+    critBox.replaceChildren(...(cfg.criteria[tp] || []).map((k) => {
+      const bs = [1, 2, 3, 4, 5].map((n) => el('button', { type: 'button', textContent: '★', onclick: () => {
+        if (crit[k] === n) delete crit[k]; else crit[k] = n;
+        bs.forEach((b, i) => b.classList.toggle('on', i < (crit[k] || 0)));
+      } }));
+      bs.forEach((b, i) => b.classList.toggle('on', i < (crit[k] || 0)));
+      return el('div', { className: 'crit' }, el('span', { textContent: CRIT[k] }), el('div', {}, ...bs));
+    }));
+  };
+  setType(type);
   const text = el('textarea', { placeholder: t('¿Sombra? ¿Vistas? ¿Ruido? ¿Es cómodo?'), rows: 3, maxLength: 600, value: mine?.text || '' });
   const thumbs = el('div', { className: 'thumbs' });
   const pickFile = el('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true });
@@ -427,9 +447,18 @@ function reviewFields(mine) {
     }
     pickFile.value = '';
   };
-  return { rating: () => rating, files, text, err, nodes: [el('div', { className: 'pick' }, ...btns), text,
+  return { rating: () => rating, ratings: () => Object.fromEntries(Object.entries(crit).filter(([k]) => (cfg.criteria[type] || []).includes(k))),
+    setType, files, text, err, nodes: [el('div', { className: 'pick' }, ...btns), el('div', { className: 'muted', textContent: t('Detalles (opcional)') }), critBox, text,
     el('button', { type: 'button', className: 'btn filebtn', textContent: t('📷 Añadir fotos (máx. 3)'), onclick: () => pickFile.click() }),
     pickFile, thumbs, err] };
+}
+
+function critAvg(p) { // media por criterio, de las reseñas que lo puntuaron
+  const acc = {};
+  p.reviews.forEach((r) => Object.entries(r.ratings || {}).forEach(([k, v]) => (acc[k] ||= []).push(v)));
+  const rows = Object.entries(acc).filter(([k]) => CRIT[k]);
+  return rows.length ? el('div', { className: 'crits' }, ...rows.map(([k, vs]) =>
+    el('span', { textContent: `${CRIT[k]} ${(vs.reduce((a, b) => a + b, 0) / vs.length).toFixed(1)}★` }))) : null;
 }
 
 function renderPlace(p) {
@@ -442,21 +471,21 @@ function renderPlace(p) {
   if (p.count) sum.append(el('span', { className: 'big', textContent: p.avg.toFixed(1) + ' ' }),
     el('span', { className: 'stars', textContent: stars(p.avg) }), el('span', { textContent: ` (${p.count})` }));
   else sum.textContent = t('Aún sin reseñas. ¡Sé el primero!');
-  c.append(sum, photoStrip(p.photos, 'photos'));
+  c.append(sum, critAvg(p), photoStrip(p.photos, 'photos'));
 
   if (!me) {
     c.append(el('button', { className: 'submit', style: 'margin:14px 0;width:100%', textContent: t('Inicia sesión para reseñar'),
       onclick: () => openAuth(t('Inicia sesión para reseñar este sitio')) }));
   } else {
     const mine = p.reviews.find((r) => r.author === me.username);
-    const f = reviewFields(mine);
+    const f = reviewFields(mine, p.type);
     const form = el('form', {}, el('h3', { textContent: mine ? t('Editar tu reseña') : t('Deja tu reseña') }),
       ...f.nodes, el('button', { className: 'submit', textContent: t('Publicar') }));
     form.onsubmit = async (e) => {
       e.preventDefault();
       if (!f.rating()) return (f.err.textContent = t('Elige una nota'));
       try {
-        const d = await api('POST', `/places/${p.id}/reviews`, { rating: f.rating(), text: f.text.value, photos: f.files,
+        const d = await api('POST', `/places/${p.id}/reviews`, { rating: f.rating(), ratings: f.ratings(), text: f.text.value, photos: f.files,
           place: { lat: p.lat, lng: p.lng, name: p.name, type: p.type } });
         upsert(d); openPlace(p.id);
       } catch (x) { f.err.textContent = x.message; }
@@ -648,7 +677,8 @@ map.on('click', (e) => {
   const c = content();
   const name = el('input', { placeholder: t('Ej. Banco bajo el olmo'), maxLength: 80 });
   const type = el('select', {}, ...Object.entries(TYPES).map(([k, v]) => el('option', { value: k, textContent: v })));
-  const f = reviewFields();
+  const f = reviewFields(undefined, 'bench');
+  type.onchange = () => f.setType(type.value);
   const err = f.err;
   const form = el('form', {}, el('h3', { textContent: t('Nuevo sitio') }),
     el('div', { className: 'muted', textContent: t('Arrastra el marcador para ajustar la posición.') }),
@@ -663,7 +693,7 @@ map.on('click', (e) => {
     try {
       let p = await api('POST', '/places', { lat: ll.lat, lng: ll.lng, name: name.value, type: type.value });
       if (f.rating()) {
-        try { p = await api('POST', `/places/${p.id}/reviews`, { rating: f.rating(), text: f.text.value, photos: f.files }); }
+        try { p = await api('POST', `/places/${p.id}/reviews`, { rating: f.rating(), ratings: f.ratings(), text: f.text.value, photos: f.files }); }
         catch { /* el sitio ya existe: se puede reseñar desde su ficha */ }
       }
       closeDraft(); upsert(p); openPlace(p.id);
