@@ -1,0 +1,19 @@
+# Borra de Storage las fotos de Poyo que ya no se usan (ver poyo/scripts/purge-photos.js).
+# Secretos: POYO_DATABASE_URL (rol poyo_app), SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY.
+name: poyo-purge-photos
+on:
+  schedule: [{ cron: '41 4 * * *' }]
+  workflow_dispatch:
+jobs:
+  purge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm ci --omit=dev
+      - run: node scripts/purge-photos.js
+        env:
+          DATABASE_URL: ${{ secrets.POYO_DATABASE_URL }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
