@@ -30,6 +30,7 @@ async function planRoute({ from, to, limit, sites, constraints, route, reach = 3
   const cons = constraints || [{ id: 'rest', sites, limit }];
   const stops = []; // paradas que obligamos a visitar, además de las que ya pillan de paso
   const failed = new Set();
+  const tries = []; // cada ruta probada; al final nos quedamos con la que menos se pasa de los límites (los desvíos inútiles se descartan)
   let r, per;
   for (let iter = 0; ; iter++) {
     r = await route([from, ...stops.map((s) => [s.lat, s.lng]), to]);
@@ -40,6 +41,7 @@ async function planRoute({ from, to, limit, sites, constraints, route, reach = 3
       const marks = [{ id: 'start', pos: 0 }, ...rest, { id: 'end', pos: total }];
       return { ...c, near, rest, gaps: marks.slice(1).map((m, i) => ({ kind: c.id, from: marks[i], to: m, meters: Math.round(m.pos - marks[i].pos) })) };
     });
+    tries.push({ r, per, over: per.reduce((sum, c) => sum + c.gaps.reduce((s, g) => s + Math.max(0, g.meters - c.limit), 0), 0) });
     // por cada tramo largo, la parada más lejana que alcanzamos dentro del límite sin desviarnos demasiado; todas con una sola consulta
     const added = new Map();
     for (const c of per) {
@@ -54,6 +56,7 @@ async function planRoute({ from, to, limit, sites, constraints, route, reach = 3
     for (const s of stops) s.pos = nearest(r.coords, cum, [s.lat, s.lng]).pos; // posición en la ruta actual: el orden de las paradas debe seguirla
     stops.sort((x, y) => x.pos - y.pos);
   }
+  ({ r, per } = tries.reduce((best, t) => (t.over < best.over - 1 || (Math.abs(t.over - best.over) <= 1 && t.r.distance < best.r.distance) ? t : best)));
   const total = Math.round(cumulative(r.coords).at(-1));
   const gaps = per.flatMap((c) => c.gaps), maxGaps = Object.fromEntries(per.map((c) => [c.id, Math.max(...c.gaps.map((g) => g.meters))]));
   const seen = new Set();
