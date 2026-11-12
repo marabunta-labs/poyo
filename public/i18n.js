@@ -3,6 +3,8 @@
 const LANGS = { es: 'Español', en: 'English' };
 const DICT = { en: {
   // tipos y filtros
+  'Toca el mapa para elegir el origen': 'Tap the map to set the start',
+  'Toca el mapa para elegir el destino': 'Tap the map to set the destination',
   'Todos los sitios': 'All places',
   'Solo bases (todos los grupos)': 'Only bases (all groups)',
   'Bases por grupo': 'Bases by group',

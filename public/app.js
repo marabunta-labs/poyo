@@ -42,6 +42,8 @@ async function uploadPhoto(blob) {
 
 const map = L.map('map', { zoomControl: false, maxZoom: 20 }).setView([40.4168, -3.7038], 17);
 L.control.zoom({ position: 'bottomleft' }).addTo(map);
+// Capas propias: los sitios sueltos (markerPane) se esconden con zoom < 16, donde se ven grupos; grupos, ruta, borrador y reseñas en el mapa siempre se ven
+map.createPane('clusters').style.zIndex = 620; map.createPane('top').style.zIndex = 630;
 const OSM_ATTR = '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
 const OFM_ATTR = '<a href="https://openfreemap.org">OpenFreeMap</a> © <a href="https://openmaptiles.org">OpenMapTiles</a> ' + OSM_ATTR;
 const BASES = { // los dos primeros son vectoriales SIN comercios ni iconos, para que destaquen los sitios de Poyo
@@ -173,7 +175,7 @@ async function loadClusters(b) {
     rows.forEach(([lat, lng, n]) => {
       total += n;
       const px = 26 + Math.min(22, Math.round(Math.log10(n + 1) * 10));
-      L.marker([lat, lng], { icon: L.divIcon({ className: '', iconSize: [px, px], html: `<div class="cl" style="width:${px}px;height:${px}px">${n}</div>` }) })
+      L.marker([lat, lng], { pane: 'clusters', icon: L.divIcon({ className: '', iconSize: [px, px], html: `<div class="cl" style="width:${px}px;height:${px}px">${n}</div>` }) })
         .on('click', () => map.setView([lat, lng], Math.min(map.getZoom() + 2, 17))).addTo(clusterLayer);
     });
     $('status').textContent = t('{n} sitios en esta zona', { n: total });
@@ -187,8 +189,10 @@ function pruneMarkers(b) { // con mucho movimiento se acumulan miles de marcador
 async function loadOSM() {
   clearTimeout(osmRetry);
   const z = map.getZoom(), b = map.getBounds();
+  map.getPane('markerPane').style.display = z < 16 ? 'none' : ''; // con zoom bajo se ven los grupos, no los pines
   if (z >= 16) clusterLayer.clearLayers();
   if (z < 13) { $('status').textContent = t('Acércate para ver sitios'); return; }
+  if (z < 16 && route.result) { clusterLayer.clearLayers(); return; } // viendo una ruta completa: sin burbujas de grupos encima
   if (z < 16) return loadClusters(b);
   pruneMarkers(b);
   const qs = new URLSearchParams({ s: b.getSouth(), w: b.getWest(), n: b.getNorth(), e: b.getEast() });
@@ -291,7 +295,7 @@ function showOnMap(reviews, label) {
   if (!rs.length) return alert('Todavía no hay reseñas que enseñar en el mapa.');
   $('mapchip-t').textContent = `${label} · ${rs.length}`;
   rs.forEach((r) => {
-    const m = L.marker([r.place.lat, r.place.lng], { zIndexOffset: 3000, icon: L.divIcon({ className: '', iconSize: [38, 38], iconAnchor: [19, 19],
+    const m = L.marker([r.place.lat, r.place.lng], { pane: 'top', zIndexOffset: 3000, icon: L.divIcon({ className: '', iconSize: [38, 38], iconAnchor: [19, 19],
       html: `<div class="pmark">${avatarEl({ username: r.author, avatar: r.avatar }, 34).outerHTML}<b>${r.rating}★</b></div>` }) });
     m.bindTooltip(`${r.author}: ${r.place.name || TYPES[r.place.type]}`);
     m.on('click', () => openPlace(r.placeId));
@@ -812,7 +816,7 @@ $('close').addEventListener('click', closeDraft);
 map.on('click', (e) => {
   if (!adding) return;
   setAdding(false); closeDraft();
-  draft = L.marker(e.latlng, { draggable: true, opacity: 0.8 }).addTo(map);
+  draft = L.marker(e.latlng, { pane: 'top', draggable: true, opacity: 0.8 }).addTo(map);
   const c = content();
   const name = el('input', { placeholder: t('Ej. Banco bajo el olmo'), maxLength: 80 });
   const type = el('select', {}, ...Object.entries(TYPES).map(([k, v]) => el('option', { value: k, textContent: v })));
@@ -911,21 +915,28 @@ $('gamebtn').onclick = openGame;
 // ---------- ruta con paradas: sin tramos largos sin banco (o sin fuente) ----------
 const route = { from: null, to: null, kinds: ['bench'], gaps: { bench: 250, fountain: 250 }, picking: null, result: null, layer: L.layerGroup().addTo(map) };
 const openRoute = () => visit('route', renderRoute);
-const setPicking = (v) => { route.picking = v; $('map').classList.toggle('picking', !!v); };
+const pickHint = el('div', { className: 'pickhint', hidden: true }); document.body.append(pickHint);
+const setPicking = (v) => {
+  route.picking = v; $('map').classList.toggle('picking', !!v); pickHint.hidden = !v;
+  if (v) pickHint.textContent = v === 'from' ? t('Toca el mapa para elegir el origen') : t('Toca el mapa para elegir el destino');
+};
 const pickRoutePoint = (lat, lng, label = '') => { route[route.picking] = { lat, lng, label }; setPicking(null); route.result = null; drawRoute(); openRoute(); };
 map.on('click', (e) => { if (route.picking) pickRoutePoint(e.latlng.lat, e.latlng.lng); });
 const endIcon = (txt) => L.divIcon({ className: '', html: `<div class="rend">${txt}</div>`, iconSize: [24, 24], iconAnchor: [12, 12] });
 const km = (m) => (m / 1000).toFixed(1);
 function drawRoute() { // origen, destino y, si ya está calculada, la ruta con sus paradas y los tramos largos en rojo
   route.layer.clearLayers();
-  if (route.from) L.marker([route.from.lat, route.from.lng], { icon: endIcon('A') }).addTo(route.layer);
-  if (route.to) L.marker([route.to.lat, route.to.lng], { icon: endIcon('B') }).addTo(route.layer);
+  if (route.from) L.marker([route.from.lat, route.from.lng], { pane: 'top', icon: endIcon('A') }).addTo(route.layer);
+  if (route.to) L.marker([route.to.lat, route.to.lng], { pane: 'top', icon: endIcon('B') }).addTo(route.layer);
   const r = route.result; if (!r) return;
   L.polyline(r.geometry, { color: '#2f7d4f', weight: 5, opacity: 0.85 }).addTo(route.layer);
   const cum = [0]; r.geometry.forEach((p, i) => { if (i) cum.push(cum[i - 1] + L.latLng(r.geometry[i - 1]).distanceTo(L.latLng(p))); });
   r.gaps.forEach((g) => L.polyline(r.geometry.filter((_, i) => cum[i] >= g.from && cum[i] <= g.to), { color: '#d93025', weight: 6, dashArray: '2 10', lineCap: 'round' }).addTo(route.layer));
+  const many = r.stops.length > 25; // con muchas paradas, puntos pequeños en vez de iconos (si no se amontonan sobre la ruta)
   r.stops.forEach((s) => {
-    const m = L.marker([s.lat, s.lng], { icon: L.divIcon({ className: '', html: `<div class="rstop">${EMOJI[s.type] || EMOJI.bench}</div>`, iconSize: [20, 20], iconAnchor: [10, 10] }) }).addTo(route.layer);
+    const m = L.marker([s.lat, s.lng], { pane: 'top', icon: many
+      ? L.divIcon({ className: '', html: `<div class="rdot ${s.type === 'fountain' ? 'f' : ''}"></div>`, iconSize: [12, 12], iconAnchor: [6, 6] })
+      : L.divIcon({ className: '', html: `<div class="rstop">${EMOJI[s.type] || EMOJI.bench}</div>`, iconSize: [20, 20], iconAnchor: [10, 10] }) }).addTo(route.layer);
     m.bindTooltip(`${s.name || TYPES[s.type]} · ${away(s.at)}`);
     m.on('click', () => openPlace(s.id));
   });
@@ -959,7 +970,8 @@ function renderRoute() {
     go.disabled = true; go.textContent = t('Calculando…');
     try {
       route.result = await api('GET', `/route?from=${route.from.lat},${route.from.lng}&to=${route.to.lat},${route.to.lng}&kinds=${route.kinds.join(',')}&gaps=${route.kinds.map((k) => `${k}:${route.gaps[k]}`).join(',')}`);
-      drawRoute(); map.fitBounds(L.polyline(route.result.geometry).getBounds(), { padding: [40, 40] }); renderRoute();
+      // en móvil la hoja inferior tapa media pantalla: el encuadre deja ese hueco
+      drawRoute(); map.fitBounds(L.polyline(route.result.geometry).getBounds(), { paddingTopLeft: [40, 120], paddingBottomRight: [40, innerWidth <= 700 ? innerHeight * 0.5 + 20 : 40] }); renderRoute();
     } catch (x) { err.textContent = x.message; go.disabled = false; go.textContent = t('Calcular ruta'); }
   } });
   c.append(el('h2', { textContent: t('Ruta con paradas') }), el('div', { className: 'sub', textContent: t('Una ruta a pie sin tramos largos sin un banco donde sentarte (o una fuente donde beber).') }),

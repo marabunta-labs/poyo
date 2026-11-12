@@ -15,7 +15,7 @@ const pick = (a) => a[Math.floor(rnd() * a.length)];
 const gz = '../data/osm/spain.json.gz';
 const { items } = JSON.parse(zlib.gunzipSync(fs.readFileSync(new URL(gz, import.meta.url))).toString());
 const box = { s: 40.404, w: -3.705, n: 40.426, e: -3.665 };
-const sites = items.filter(([, la, ln, k]) => ['b', 'p'].includes(k) && la > box.s && la < box.n && ln > box.w && ln < box.e).sort(() => rnd() - 0.5).slice(0, 170);
+const sites = items.filter(([, la, ln, k]) => ['b', 'p'].includes(k) && la > box.s && la < box.n && ln > box.w && ln < box.e).sort(() => rnd() - 0.5).slice(0, 450);
 const TYPE = { b: 'bench', p: 'picnic' };
 console.log(sites.length, 'sitios reales de OSM en la zona');
 
