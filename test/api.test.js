@@ -28,7 +28,7 @@ before(async () => {
     const who = Object.values(users).find((u) => 'Bearer ' + u.token === req.headers.authorization);
     res.writeHead(who ? 200 : 401, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(who ? { id: who.id } : { error: 'bad' }));
   }).listen(54401);
-  srv = spawn('node', ['server.js'], { env: { ...process.env, PORT: 3103, DATABASE_URL: DB, SUPABASE_URL: 'http://127.0.0.1:54401', SUPABASE_ANON_KEY: 'anon', ADMINS: 'root', DATA_DIR: '/private/tmp/claude-502/poyo-test-data' } });
+  srv = spawn('node', ['server.js'], { env: { ...process.env, PORT: 3103, DATABASE_URL: DB, SUPABASE_URL: 'http://127.0.0.1:54401', SUPABASE_ANON_KEY: 'anon', ADMINS: 'root', RATE_LIMIT: 1000, DATA_DIR: '/private/tmp/claude-502/poyo-test-data' } });
   base = 'http://127.0.0.1:3103';
   for (let i = 0; i < 50; i++) { try { await fetch(base + '/api/config'); break; } catch { await new Promise((r) => setTimeout(r, 100)); } }
 });
@@ -149,6 +149,54 @@ test('juego: ranking por zona, bases en peligro e insignias', async () => {
     select 'osm-910', $1, $2, 37.3, -3.7, 1, current_date - n, (current_date - n + time '07:30') at time zone 'Europe/Madrid' from generate_series(1, 5) n`, [users.ana.id, mine.id]);
   assert.deepEqual((await call('GET', '/users/Ana.G')).body.badges, ['early']);
   await call('POST', '/groups/leave', null, 'ana'); await call('POST', '/groups/leave', null, 'cris');
+});
+
+test('revisión de sitios: pendiente, confirmar, duplicados, reclamar con foto y «ya no existe»', async () => {
+  for (const n of ['ana', 'beto', 'cris']) await call('POST', '/groups/leave', null, n);
+  const mk = (type, lat, lng, extra = {}) => ({ lat, lng, name: 'Nuevo ' + type, type, ...extra });
+  // un sitio nuevo queda pendiente; el que lo crea no puede confirmarlo y otra persona sí, pero estando ahí
+  const w = await call('POST', '/places', mk('wall', 37.4, -3.8), 'beto'); assert.equal(w.status, 201); assert.equal(w.body.status, 'pending');
+  const wid = w.body.id;
+  assert.equal((await call('GET', '/places/' + wid, null, 'beto')).body.canConfirm, false);
+  assert.equal((await call('GET', '/places/' + wid, null, 'ana')).body.canConfirm, true);
+  assert.equal((await call('POST', `/places/${wid}/confirm`, { lat: 37.4, lng: -3.8, accuracy: 5 }, 'beto')).status, 403);
+  assert.equal((await call('POST', `/places/${wid}/confirm`, { lat: 37.401, lng: -3.8, accuracy: 5 }, 'ana')).status, 400); // a ~110 m
+  assert.equal((await call('POST', `/places/${wid}/confirm`, { lat: 37.4, lng: -3.8, accuracy: 5 }, 'ana')).body.status, 'active');
+  assert.equal((await call('POST', `/places/${wid}/confirm`, { lat: 37.4, lng: -3.8, accuracy: 5 }, 'ana')).status, 409);
+  // no se admiten dos bancos a menos de 15 m
+  assert.equal((await call('POST', '/places', mk('bench', 37.17, -3.6), 'beto')).status, 409); // ya está osm-900 (y otros)
+  // reclamar un banco nuevo: grupo, estar ahí, foto y nota
+  const claim = { lat: 37.5, lng: -3.9, accuracy: 5 };
+  const photo = users.ana.id + '/abcdef123456.jpg';
+  assert.equal((await call('POST', '/places', mk('bench', 37.5, -3.9, { claim, rating: 4, photos: [photo] }), 'ana')).status, 403); // sin grupo
+  await call('POST', '/groups', { name: 'Descubridores' }, 'ana');
+  assert.equal((await call('POST', '/places', mk('bench', 37.5, -3.9, { claim, rating: 4 }), 'ana')).status, 400); // sin foto
+  assert.equal((await call('POST', '/places', mk('bench', 37.5, -3.9, { claim: { ...claim, lat: 37.51 }, rating: 4, photos: [photo] }), 'ana')).status, 400); // lejos
+  const n = await call('POST', '/places', mk('bench', 37.5, -3.9, { claim, rating: 4, photos: [photo] }), 'ana');
+  assert.equal(n.status, 201); assert.equal(n.body.points, 6); assert.equal(n.body.count, 1); assert.equal(n.body.baseGroup, 'Descubridores');
+  const bid = n.body.id;
+  // «ya no existe»: con base hacen falta 5 personas distintas (3 sin ella); un moderador lo oculta al momento
+  assert.equal((await call('POST', `/places/${bid}/flag`, {}, 'beto')).body.hidden, false);
+  assert.equal((await call('POST', `/places/${bid}/flag`, {}, 'beto')).body.flags, 1); // la misma persona no suma dos veces
+  assert.equal((await call('POST', `/places/${bid}/flag`, {}, 'cris')).body.hidden, false);
+  assert.equal((await call('POST', `/places/${bid}/flag`, {}, 'ana')).body.hidden, false); // 3 < 5 porque el banco tiene base
+  const h = await call('POST', `/places/${bid}/flag`, {}, 'root'); assert.equal(h.body.hidden, true);
+  assert.equal((await call('GET', '/places')).body.some((p) => p.id === bid), false);
+  assert.equal((await call('GET', '/places/' + bid, null, 'ana')).status, 404);
+  assert.equal((await call('GET', '/places/' + bid, null, 'root')).status, 200); // el moderador sí lo ve
+  assert.equal((await call('GET', '/admin/places?status=hidden', null, 'root')).body[0].id, bid);
+  assert.equal((await call('POST', '/admin/places/' + bid + '/hide', null, 'ana')).status, 403);
+  assert.equal((await admin.query("select points, kind from poyo.checkins where place_id = $1", [bid])).rows[0].points, 1); // pierde el bonus
+  assert.equal((await admin.query("select count(*)::int n from poyo.place_control where place_id = $1", [bid])).rows[0].n, 0);
+  assert.equal((await call('POST', `/places/${bid}/checkin`, { lat: 37.5, lng: -3.9, accuracy: 5 }, 'ana')).status, 404);
+  assert.equal((await call('POST', '/admin/places/' + bid + '/restore', null, 'root')).body.status, 'active');
+  assert.equal((await call('GET', '/places')).body.some((p) => p.id === bid), true);
+  // pendientes para el moderador
+  const pend = await call('POST', '/places', mk('wall', 37.6, -4), 'beto');
+  assert.equal((await call('GET', '/admin/places', null, 'root')).body.some((p) => p.id === pend.body.id), true);
+  assert.equal((await call('POST', `/admin/places/${pend.body.id}/approve`, null, 'root')).body.status, 'active');
+  await admin.query('delete from poyo.reviews where place_id = $1', [bid]); // para no alterar el feed de las pruebas siguientes
+  await call('POST', '/groups/leave', null, 'ana');
 });
 
 test('amistades: solicitud, aceptar, rechazo, feed y perfil', async () => {

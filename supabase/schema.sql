@@ -24,6 +24,7 @@ create table if not exists poyo.places (
   lng double precision not null check (lng between -180 and 180),
   name text not null default '',
   type text not null default 'bench' check (type in ('bench', 'picnic', 'wall', 'other', 'fountain', 'shop')),
+  status text not null default 'active' check (status in ('active', 'pending', 'hidden')),   -- pending: sitio nuevo sin verificar; hidden: «ya no existe»
   created_by uuid references poyo.profiles(id) on delete set null,
   created_at timestamptz not null default now()
 );
@@ -93,6 +94,7 @@ create table if not exists poyo.checkins (
   lng double precision not null,
   accuracy real,
   points smallint not null check (points between 1 and 9),
+  kind text not null default 'visit' check (kind in ('visit', 'new_place')),   -- new_place: banco nuevo reclamado con foto (+5)
   day date not null default (now() at time zone 'Europe/Madrid')::date,
   unique (place_id, user_id, day)
 );
@@ -104,6 +106,13 @@ create table if not exists poyo.place_control (   -- grupo que manda ahora en ca
   place_id text primary key references poyo.places(id) on delete cascade,
   group_id uuid not null references poyo.groups(id) on delete cascade,
   since timestamptz not null default now()
+);
+
+create table if not exists poyo.place_flags (   -- «ya no existe»: una marca por persona y sitio
+  place_id text not null references poyo.places(id) on delete cascade,
+  user_id uuid not null references poyo.profiles(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (place_id, user_id)
 );
 
 -- Fotos de las que nadie se ocupó al borrar (moderación, cuentas borradas): se purgan con scripts/purge-photos.js
@@ -147,9 +156,11 @@ alter table poyo.groups enable row level security;
 alter table poyo.group_members enable row level security;
 alter table poyo.checkins enable row level security;
 alter table poyo.place_control enable row level security;
+alter table poyo.place_flags enable row level security;
 create policy poyo_app_all on poyo.groups for all to poyo_app using (true) with check (true);
 create policy poyo_app_all on poyo.group_members for all to poyo_app using (true) with check (true);
 create policy poyo_app_all on poyo.checkins for all to poyo_app using (true) with check (true);
 create policy poyo_app_all on poyo.place_control for all to poyo_app using (true) with check (true);
+create policy poyo_app_all on poyo.place_flags for all to poyo_app using (true) with check (true);
 
 commit;

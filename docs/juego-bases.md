@@ -87,7 +87,7 @@ Quién manda en cada banco se guarda en `poyo.place_control` y se reevalúa en c
 
 1. **Núcleo** *(hecho)*: grupos con código, check-in con antitrampas, puntos, control, aros en el mapa y ranking global de grupos y personas. Requiere la migración de las tablas en producción.
 2. **Rankings por zona** *(hecho)*, **insignias** («Madrugador», «Rey del atardecer», «Fiel 30 días», «Explorador», en el perfil) y aviso «tu base está en peligro» (⚠️ en el botón Juego y en la lista de bases).
-3. **Revisión de sitios**: `status`, «sin verificar», «Ya no existe», bonus por banco nuevo con foto.
+3. **Revisión de sitios** *(hecho)*: `places.status`, «Sin verificar» + confirmar estando ahí (otra persona o un moderador), «Ya no existe» (3 personas, 5 si tiene base, 1 moderador), bancos nuevos a 15 m mínimo, banco nuevo reclamado con foto (+5) que pierde el bonus si se oculta, y la pestaña Mod con pendientes y ocultos. Requiere la migración `status`, `kind` y `place_flags`.
 
 ## Decisiones tomadas
 

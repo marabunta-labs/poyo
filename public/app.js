@@ -492,6 +492,36 @@ function reviewFields(mine, type) {
     pickFile, thumbs, err] };
 }
 
+// Ubicación del móvil (para confirmar sitios, reclamar bancos nuevos…)
+const here = () => new Promise((ok, no) => navigator.geolocation
+  ? navigator.geolocation.getCurrentPosition((x) => ok({ lat: x.coords.latitude, lng: x.coords.longitude, accuracy: x.coords.accuracy }), () => no(new Error(t('No se pudo obtener tu ubicación'))), { enableHighAccuracy: true, timeout: 15000 })
+  : no(new Error(t('Tu navegador no da la ubicación'))));
+const dropPlace = (id) => { markers.get(id)?.remove(); markers.delete(id); places.delete(id); };
+
+// Revisión de sitios: «sin verificar», confirmar estando ahí, «ya no existe» y, para moderadores, aprobar/ocultar/restaurar
+function moderationBox(p) {
+  const box = el('div', { className: 'rrow', style: 'margin:6px 0' }), err = el('div', { className: 'err' });
+  const act = (fn) => async () => { err.textContent = ''; try { await fn(); } catch (x) { err.textContent = x.message; } };
+  if (p.status === 'pending') box.append(el('span', { className: 'badge', textContent: t('Sin verificar') }));
+  if (p.status === 'hidden') box.append(el('span', { className: 'badge', textContent: t('Oculto') }));
+  if (p.canConfirm) box.append(el('button', { className: 'btn', textContent: t('✅ Confirmar que existe (estando ahí)'), onclick: act(async () => {
+    upsert(await api('POST', `/places/${p.id}/confirm`, await here())); openPlace(p.id);
+  }) }));
+  if (me && !me.needsProfile && p.status !== 'hidden') box.append(el('button', { className: 'btn', disabled: !!p.flagged, textContent: p.flagged ? t('Ya lo has reportado') : t('🚫 Ya no existe'), onclick: act(async () => {
+    if (!confirm(t('¿Reportar que este sitio ya no existe?'))) return;
+    const r = await api('POST', `/places/${p.id}/flag`, { place: { lat: p.lat, lng: p.lng, name: p.name, type: p.type } });
+    if (r.hidden) { dropPlace(p.id); $('panel').hidden = true; } else { alert(t('Gracias: se ocultará cuando varias personas lo confirmen')); openPlace(p.id); }
+  }) }));
+  if (me?.isAdmin) {
+    const adm = (what, label) => el('button', { className: 'btn', textContent: label, onclick: act(async () => {
+      const r = await api('POST', `/admin/places/${p.id}/${what}`); if (what === 'hide') { dropPlace(p.id); $('panel').hidden = true; } else { upsert(r); openPlace(p.id); }
+    }) });
+    if (p.status === 'pending') box.append(adm('approve', t('Aprobar')));
+    if (p.status === 'hidden') box.append(adm('restore', t('Restaurar'))); else box.append(adm('hide', t('Ocultar')));
+  }
+  return box.children.length ? el('div', {}, box, err) : null;
+}
+
 // Juego de bases: quién manda en este banco y el botón de check-in (hay que estar a menos de 40 m)
 function gameBox(p, note) {
   if (!['bench', 'picnic'].includes(p.type)) return null;
@@ -537,7 +567,7 @@ function renderPlace(p) {
   if (p.count) sum.append(el('span', { className: 'big', textContent: p.avg.toFixed(1) + ' ' }),
     el('span', { className: 'stars', textContent: stars(p.avg) }), el('span', { textContent: ` (${p.count})` }));
   else sum.textContent = t('Aún sin reseñas. ¡Sé el primero!');
-  c.append(...[sum, critAvg(p), gameBox(p), photoStrip(p.photos, 'photos')].filter(Boolean)); // append(null) pintaría «null»
+  c.append(...[moderationBox(p), sum, critAvg(p), gameBox(p), photoStrip(p.photos, 'photos')].filter(Boolean)); // append(null) pintaría «null»
 
   if (!me) {
     c.append(el('button', { className: 'submit', style: 'margin:14px 0;width:100%', textContent: t('Inicia sesión para reseñar'),
@@ -710,8 +740,16 @@ async function loadSocial(tab) {
       if (!f.friends.length && !f.incoming.length && !f.outgoing.length)
         c.append(el('p', { className: 'muted', textContent: t('Aún no tienes amigos.') }), el('button', { className: 'btn fill', textContent: t('🔎 Buscar gente'), onclick: () => openSocial('search') }));
     } else if (tab === 'mod') {
-      const reports = await api('GET', '/admin/reports');
+      const [reports, pend, hid] = await Promise.all([api('GET', '/admin/reports'), api('GET', '/admin/places?status=pending'), api('GET', '/admin/places?status=hidden')]);
       if (stale(vid)) return;
+      const placeRow = (p, what, label) => el('div', { className: 'report' },
+        el('button', { className: 'link', textContent: `${EMOJI[p.type] || ''} ${p.name || TYPES[p.type]}`, onclick: () => { $('panel').hidden = true; map.setView([p.lat, p.lng], 18); if (p.status !== 'hidden') openPlace(p.id); } }),
+        el('div', { className: 'muted', textContent: t('por @{by} · {n} reportes', { by: p.author || '—', n: p.flags }) }),
+        el('div', { className: 'acts' }, el('button', { className: 'btn', textContent: label, onclick: async () => { await api('POST', `/admin/places/${p.id}/${what}`); openSocial('mod'); } }),
+          what === 'approve' ? el('button', { className: 'btn danger', textContent: t('Ocultar'), onclick: async () => { await api('POST', `/admin/places/${p.id}/hide`); openSocial('mod'); } }) : null));
+      c.append(el('h3', { textContent: t('Sitios sin verificar') }), ...(pend.length ? pend.map((p) => placeRow(p, 'approve', t('Aprobar'))) : [el('p', { className: 'muted', textContent: t('Ninguno') })]),
+        el('h3', { textContent: t('Sitios ocultos') }), ...(hid.length ? hid.map((p) => placeRow(p, 'restore', t('Restaurar'))) : [el('p', { className: 'muted', textContent: t('Ninguno') })]),
+        el('h3', { textContent: t('Denuncias') }));
       if (!reports.length) c.append(el('p', { className: 'muted', textContent: t('Sin denuncias pendientes 🎉') }));
       reports.forEach((rp) => c.append(el('div', { className: 'report' },
         el('div', { className: 'muted', textContent: t('Denunciada por @{by}: {reason}', { by: rp.by, reason: rp.reason || t('sin motivo') }) }),
@@ -753,10 +791,15 @@ map.on('click', (e) => {
   const f = reviewFields(undefined, 'bench');
   type.onchange = () => f.setType(type.value);
   const err = f.err;
+  const claim = el('input', { type: 'checkbox' }), claimRow = el('label', { className: 'rchk', hidden: true }, claim, t('🏴 Reclamar con mi ubicación (+5 pts: estando ahí, con foto y nota)'));
+  const showClaim = () => (claimRow.hidden = !(hasGroup && ['bench', 'picnic'].includes(type.value)));
+  let hasGroup = false;
+  if (me && !me.needsProfile) api('GET', '/groups/mine').then((g) => { hasGroup = !!g; showClaim(); }).catch(() => {});
+  type.addEventListener('change', showClaim);
   const form = el('form', {}, el('h3', { textContent: t('Nuevo sitio') }),
     el('div', { className: 'muted', textContent: t('Arrastra el marcador para ajustar la posición.') }),
     el('label', { textContent: t('Nombre (opcional)') }, name), el('label', { textContent: t('Tipo') }, type),
-    el('h3', { textContent: t('⭐ Tu opinión (opcional, pero ayuda mucho)') }), ...f.nodes,
+    el('h3', { textContent: t('⭐ Tu opinión (opcional, pero ayuda mucho)') }), ...f.nodes, claimRow,
     el('button', { className: 'submit', textContent: t('Crear sitio') }),
     el('button', { type: 'button', className: 'btn', textContent: t('Cancelar'), onclick: () => { closeDraft(); $('panel').hidden = true; } }));
   form.onsubmit = async (ev) => {
@@ -764,6 +807,11 @@ map.on('click', (e) => {
     const ll = draft.getLatLng();
     if (!f.rating() && (f.text.value.trim() || f.files.length)) return (err.textContent = t('Elige una nota para publicar tu opinión'));
     try {
+      if (claim.checked && !claimRow.hidden) { // sitio nuevo + reseña + check-in en un solo paso
+        if (!f.rating() || !f.files.length) return (err.textContent = t('Para reclamar hace falta nota y al menos una foto'));
+        const p = await api('POST', '/places', { lat: ll.lat, lng: ll.lng, name: name.value, type: type.value, claim: await here(), rating: f.rating(), ratings: f.ratings(), text: f.text.value, photos: f.files });
+        closeDraft(); upsert(p); openPlace(p.id); alert(t('+{n} puntos para tu grupo', { n: p.points })); return;
+      }
       let p = await api('POST', '/places', { lat: ll.lat, lng: ll.lng, name: name.value, type: type.value });
       if (f.rating()) {
         try { p = await api('POST', `/places/${p.id}/reviews`, { rating: f.rating(), ratings: f.ratings(), text: f.text.value, photos: f.files }); }

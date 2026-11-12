@@ -50,7 +50,7 @@ async function readJSON(req) {
   try { return JSON.parse(Buffer.concat(chunks).toString() || '{}'); } catch { return fail(400, 'JSON inválido'); }
 }
 
-// Límite simple: 60 escrituras por minuto y por IP.
+// Límite simple: 60 escrituras por minuto y por IP (RATE_LIMIT lo cambia; los tests lo suben).
 const hits = new Map();
 function limited(ip) {
   const now = Date.now();
@@ -58,7 +58,7 @@ function limited(ip) {
   arr.push(now);
   hits.set(ip, arr);
   if (hits.size > 5000) for (const [k, v] of hits) if (now - v[v.length - 1] > 60000) hits.delete(k);
-  return arr.length > 60;
+  return arr.length > (Number(process.env.RATE_LIMIT) || 60);
 }
 
 const clean = (s, max) => String(s ?? '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, max);
@@ -104,7 +104,7 @@ const REVIEW_SQL = `select r.id, r.user_id as _uid, r.place_id as "placeId", r.r
   from poyo.reviews r join poyo.profiles u on u.id = r.user_id join poyo.places p on p.id = r.place_id`;
 const shapeReview = ({ _uid, ...r }, withPlace) => (withPlace ? r : { ...r, place: undefined });
 
-const STATS_SQL = `select p.id, p.lat, p.lng, p.name, p.type, count(r.id)::int as count,
+const STATS_SQL = `select p.id, p.lat, p.lng, p.name, p.type, p.status, count(r.id)::int as count,
     round(avg(r.rating)::numeric, 1)::float as avg,
     (select g.color from poyo.place_control pc join poyo.groups g on g.id = pc.group_id where pc.place_id = p.id) as "baseColor",
     (select g.name from poyo.place_control pc join poyo.groups g on g.id = pc.group_id where pc.place_id = p.id) as "baseGroup",
@@ -174,7 +174,7 @@ function osmClusters(url) {
   for (let y = Math.floor(s / CELL); y <= Math.floor(n / CELL); y++) {
     for (let x = Math.floor(w / CELL); x <= Math.floor(e / CELL); x++) {
       for (const it of grid.get(y + ',' + x) || []) {
-        if (it.lat < s || it.lat > n || it.lng < w || it.lng > e || !kinds.has(tagKind(it.tags))) continue;
+        if (it.lat < s || it.lat > n || it.lng < w || it.lng > e || !kinds.has(tagKind(it.tags)) || hidden.has(it.id)) continue;
         const k = Math.floor(it.lat / size) + ',' + Math.floor(it.lng / size);
         const c = acc.get(k) || acc.set(k, [0, 0, 0]).get(k);
         c[0] += it.lat; c[1] += it.lng; c[2]++;
@@ -274,9 +274,9 @@ async function routeApi(url) {
   const sites = new Map();
   for (const it of localSites(s, w, n, e, 20000)) {
     const type = it.tags.amenity === 'drinking_water' ? 'fountain' : it.tags.leisure === 'picnic_table' ? 'picnic' : it.tags.amenity === 'bench' ? 'bench' : null;
-    if (wanted.includes(type)) sites.set(it.id, { id: it.id, lat: it.lat, lng: it.lng, name: it.tags.name || '', type });
+    if (wanted.includes(type) && !hidden.has(it.id)) sites.set(it.id, { id: it.id, lat: it.lat, lng: it.lng, name: it.tags.name || '', type });
   }
-  for (const p of await q('select id, lat, lng, name, type from poyo.places where lat between $1 and $3 and lng between $2 and $4 and type = any($5)', [s, w, n, e, wanted])) sites.set(p.id, p);
+  for (const p of await q('select id, lat, lng, name, type from poyo.places where lat between $1 and $3 and lng between $2 and $4 and type = any($5) and status <> \'hidden\'', [s, w, n, e, wanted])) sites.set(p.id, p);
   const all = [...sites.values()];
   return planRoute({ from, to, route: footRoute, constraints: kinds.map((k) => ({ id: k, limit, sites: all.filter((x) => GROUPS[k].includes(x.type)) })) });
 }
@@ -312,7 +312,53 @@ async function geocode(url) {
 
 
 // ---------- juego de bases (docs/juego-bases.md) ----------
-const GAME = { reach: 40, accuracy: 30, maxSpeedKmh: 150, maxPlacesDay: 10, groupMax: 5, rival: 1.2, days: 14, halfLife: 5 };
+const GAME = { reach: 40, accuracy: 30, maxSpeedKmh: 150, maxPlacesDay: 10, groupMax: 5, rival: 1.2, days: 14, halfLife: 5,
+  dup: 15, newPlace: 5, flags: 3, flagsBased: 5 }; // dup: m mínimos entre bancos; newPlace: bonus por banco nuevo; flags: reportes «ya no existe» para ocultarlo
+// Sitios ocultos por «ya no existe»: en memoria para filtrarlos del volcado de OSM sin consultar la base en cada petición
+let hidden = new Set();
+const loadHidden = async () => { try { hidden = new Set((await q("select id from poyo.places where status = 'hidden'")).map((r) => r.id)); } catch {} };
+setInterval(loadHidden, 60000).unref(); loadHidden();
+async function hidePlace(id) { // el bonus de «banco nuevo» se pierde y la base, si la había, también
+  await q("update poyo.places set status = 'hidden' where id = $1", [id]);
+  await q("update poyo.checkins set points = 1, kind = 'visit' where place_id = $1 and kind = 'new_place'", [id]);
+  await q('delete from poyo.place_control where place_id = $1', [id]);
+  hidden.add(id);
+}
+function assertSpot(raw, lat, lng, acc) { // ubicación del móvil: coordenadas válidas y GPS preciso
+  if (raw == null || !(Math.abs(lat) <= 90 && Math.abs(lng) <= 180)) fail(400, 'Ubicación no válida');
+  if (acc > GAME.accuracy) fail(400, 'Ubicación poco precisa: acércate a cielo abierto y reintenta');
+}
+async function assertMovement(me, lat, lng) { // sin teletransportes ni más de 10 bancos al día
+  const last = await q1('select lat, lng, extract(epoch from now() - at) as secs from poyo.checkins where user_id = $1 order by at desc limit 1', [me.id]);
+  if (last && meters([lat, lng], [last.lat, last.lng]) / 1000 / Math.max(last.secs / 3600, 1 / 3600) > GAME.maxSpeedKmh) fail(400, 'Ese desplazamiento no es posible');
+  if ((await q1(`select count(*)::int as n from poyo.checkins where user_id = $1 and day = (now() at time zone 'Europe/Madrid')::date`, [me.id])).n >= GAME.maxPlacesDay) fail(429, 'Máximo 10 bancos distintos al día');
+}
+async function ensurePlace(id, body) { // el sitio existe en la base; si es de OSM y aún no estaba, se guarda con los datos que manda el cliente
+  const pl = await q1('select id, lat, lng, type, status from poyo.places where id = $1', [id]);
+  if (pl) return pl;
+  const v = id.startsWith('osm-') && validPlace({ ...body.place, id }) || fail(404, 'No existe');
+  await q('insert into poyo.places (id, lat, lng, name, type) values ($1, $2, $3, $4, $5) on conflict do nothing', [v.id, v.lat, v.lng, v.name, v.type]);
+  return { ...v, status: 'active' };
+}
+async function nearSeat(lat, lng, m) { // ¿hay ya un banco o mesa a menos de `m` metros? (volcado de OSM + sitios de Poyo)
+  const dl = m / 111320 * 1.5, dn = dl / Math.cos((lat * Math.PI) / 180);
+  const osmHit = localSites(lat - dl, lng - dn, lat + dl, lng + dn, 200).some((it) => (it.tags.amenity === 'bench' || it.tags.leisure === 'picnic_table') && !hidden.has(it.id) && meters([lat, lng], [it.lat, it.lng]) < m);
+  if (osmHit) return true;
+  return (await q("select lat, lng from poyo.places where status <> 'hidden' and type in ('bench', 'picnic') and lat between $1 and $3 and lng between $2 and $4", [lat - dl, lng - dn, lat + dl, lng + dn]))
+    .some((p) => meters([lat, lng], [p.lat, p.lng]) < m);
+}
+async function saveReview(placeId, me, body) {
+  const rating = Math.round(Number(body.rating));
+  const ratings = validRatings((await q1('select type from poyo.places where id = $1', [placeId])).type, body.ratings);
+  if (!(rating >= 1 && rating <= 5)) fail(400, 'La nota va de 1 a 5');
+  const photos = (Array.isArray(body.photos) ? body.photos : []).slice(0, MAX_PHOTOS).filter((f) => photoOk(f, me.id));
+  const prev = await q1('select photos from poyo.reviews where place_id = $1 and user_id = $2', [placeId, me.id]);
+  if (prev && photos.length) await trash(prev.photos.filter((f) => !photos.includes(f)));
+  await q(`insert into poyo.reviews (place_id, user_id, rating, ratings, text, photos) values ($1, $2, $3, $4, $5, $6)
+    on conflict (place_id, user_id) do update set rating = excluded.rating, ratings = excluded.ratings, text = excluded.text, created_at = now(),
+      photos = case when cardinality(excluded.photos) > 0 then excluded.photos else poyo.reviews.photos end`,
+    [placeId, me.id, rating, ratings, clean(body.text, 600), photos]);
+}
 // puntos de un grupo en un banco: los de los últimos 14 días, cada uno con la mitad de peso cada 5 días
 const WEIGHT = `c.points * power(0.5::float8, (extract(epoch from now() - c.at) / 86400 / ${GAME.halfLife})::float8)`;
 const scoresAt = (placeId) => q(`select c.group_id as id, g.name, g.color, sum(${WEIGHT})::float as score from poyo.checkins c join poyo.groups g on g.id = c.group_id
@@ -383,7 +429,7 @@ async function api(req, res, url) {
   // --- configuración pública para el navegador (supabase-js) ---
   if (isGet && a === 'config') return send(res, 200, { supabaseUrl: SUPABASE_URL, supabaseAnonKey: SUPABASE_ANON_KEY, bucket: BUCKET, criteria: CRITERIA });
   if (isGet && a === 'osm' && b === 'clusters') return send(res, 200, osmClusters(url));
-  if (isGet && a === 'osm') return send(res, 200, await osm(url));
+  if (isGet && a === 'osm') return send(res, 200, (await osm(url)).filter((e) => !hidden.has(e.id)));
   if (isGet && a === 'geocode') return send(res, 200, await geocode(url));
   if (isGet && a === 'route') { if (limited(ip)) fail(429, 'Demasiadas peticiones, espera un minuto'); return send(res, 200, await routeApi(url)); }
 
@@ -418,41 +464,76 @@ async function api(req, res, url) {
   }
 
   // --- sitios ---
-  if (isGet && a === 'places' && !b) return send(res, 200, await q(STATS_SQL + ' group by p.id'));
+  if (isGet && a === 'places' && !b) return send(res, 200, await q(STATS_SQL + " where p.status <> 'hidden' group by p.id"));
   if (isGet && a === 'places' && b && !c) {
     const p = await placeStats(b) || fail(404, 'No existe');
+    if (p.status === 'hidden' && !isAdmin(me)) fail(404, 'No existe');
     const reviews = await q(REVIEW_SQL + ` where r.place_id = $1 order by r.created_at desc`, [b]);
     const fr = new Set(me && !me.needsProfile ? (await q(friendIdsSql, [me.id])).map((x) => x.id) : []);
     const others = reviews.some((r) => r._uid !== me?.id);
     const created = await q1('select created_by from poyo.places where id = $1', [b]);
     const canDelete = !!me && !me.needsProfile && b.startsWith('u-') && (isAdmin(me) || (created.created_by === me.id && !others));
-    return send(res, 200, { ...p, canDelete, control: await controlOf(b), reviews: reviews.map((r) => ({ ...shapeReview(r, false), byFriend: fr.has(r._uid) })) });
+    const signed = !!me && !me.needsProfile;
+    const flagged = signed && !!(await q1('select 1 as x from poyo.place_flags where place_id = $1 and user_id = $2', [b, me.id]));
+    const canConfirm = signed && p.status === 'pending' && created.created_by !== me.id;
+    return send(res, 200, { ...p, canDelete, canConfirm, flagged, control: await controlOf(b), reviews: reviews.map((r) => ({ ...shapeReview(r, false), byFriend: fr.has(r._uid) })) });
   }
   if (isPost && a === 'places' && !b) {
     needUser(me);
-    const p = validPlace({ ...(await readJSON(req)), id: 'u-' + uid() }) || fail(400, 'Datos inválidos');
-    await q('insert into poyo.places (id, lat, lng, name, type, created_by) values ($1, $2, $3, $4, $5, $6)', [p.id, p.lat, p.lng, p.name, p.type, me.id]);
-    return send(res, 201, await placeStats(p.id));
+    const body = await readJSON(req);
+    const p = validPlace({ ...body, id: 'u-' + uid() }) || fail(400, 'Datos inválidos');
+    const seat = ['bench', 'picnic'].includes(p.type);
+    if (seat && await nearSeat(p.lat, p.lng, GAME.dup)) fail(409, 'Ya hay un banco a menos de 15 m');
+    let claim = null; // «reclamar» el banco nuevo con check-in: +5 puntos (hay que estar ahí, con foto y nota)
+    if (body.claim) {
+      const groupId = await myGroupId(me) || fail(403, 'Únete a un grupo para hacer check-in');
+      if (!seat) fail(400, 'Solo se pueden reclamar bancos y mesas de pícnic');
+      const lat = Number(body.claim.lat), lng = Number(body.claim.lng), acc = Number(body.claim.accuracy) || 0;
+      assertSpot(body.claim.lat, lat, lng, acc);
+      if (meters([lat, lng], [p.lat, p.lng]) > GAME.reach) fail(400, 'Estás demasiado lejos del banco (máx. 40 m)');
+      await assertMovement(me, lat, lng);
+      if (!(Array.isArray(body.photos) ? body.photos : []).some((f) => photoOk(f, me.id))) fail(400, 'Sube una foto para reclamar un banco nuevo');
+      const rating = Math.round(Number(body.rating));
+      if (!(rating >= 1 && rating <= 5)) fail(400, 'La nota va de 1 a 5');
+      claim = { groupId, lat, lng, acc };
+    }
+    await q('insert into poyo.places (id, lat, lng, name, type, created_by, status) values ($1, $2, $3, $4, $5, $6, $7)', [p.id, p.lat, p.lng, p.name, p.type, me.id, isAdmin(me) ? 'active' : 'pending']);
+    if (claim) {
+      await saveReview(p.id, me, body);
+      await q(`insert into poyo.checkins (place_id, user_id, group_id, lat, lng, accuracy, points, kind) values ($1, $2, $3, $4, $5, $6, $7, 'new_place')`, [p.id, me.id, claim.groupId, claim.lat, claim.lng, claim.acc, 1 + GAME.newPlace]);
+      await updateControl(p.id);
+    }
+    return send(res, 201, { ...(await placeStats(p.id)), points: claim ? 1 + GAME.newPlace : 0 });
   }
   if (isPost && a === 'places' && c === 'reviews') {
     needUser(me);
     const body = await readJSON(req);
-    if (!(await q1('select id from poyo.places where id = $1', [b]))) {
-      const v = b.startsWith('osm-') && validPlace({ ...body.place, id: b });
-      if (!v) fail(404, 'No existe');
-      await q('insert into poyo.places (id, lat, lng, name, type) values ($1, $2, $3, $4, $5) on conflict do nothing', [v.id, v.lat, v.lng, v.name, v.type]);
-    }
-    const rating = Math.round(Number(body.rating));
-    const ratings = validRatings((await q1('select type from poyo.places where id = $1', [b])).type, body.ratings);
-    if (!(rating >= 1 && rating <= 5)) fail(400, 'La nota va de 1 a 5');
-    const photos = (Array.isArray(body.photos) ? body.photos : []).slice(0, MAX_PHOTOS).filter((f) => photoOk(f, me.id));
-    const prev = await q1('select photos from poyo.reviews where place_id = $1 and user_id = $2', [b, me.id]);
-    if (prev && photos.length) await trash(prev.photos.filter((f) => !photos.includes(f)));
-    await q(`insert into poyo.reviews (place_id, user_id, rating, ratings, text, photos) values ($1, $2, $3, $4, $5, $6)
-      on conflict (place_id, user_id) do update set rating = excluded.rating, ratings = excluded.ratings, text = excluded.text, created_at = now(),
-        photos = case when cardinality(excluded.photos) > 0 then excluded.photos else poyo.reviews.photos end`,
-      [b, me.id, rating, ratings, clean(body.text, 600), photos]);
+    await ensurePlace(b, body);
+    await saveReview(b, me, body);
     return send(res, 201, await placeStats(b));
+  }
+  if (isPost && a === 'places' && c === 'flag') { // «ya no existe»: con 3 personas distintas (5 si tiene base) se oculta; un moderador lo oculta al momento
+    needUser(me);
+    await ensurePlace(b, await readJSON(req));
+    await q('insert into poyo.place_flags (place_id, user_id) values ($1, $2) on conflict do nothing', [b, me.id]);
+    const n = (await q1('select count(*)::int as n from poyo.place_flags where place_id = $1', [b])).n;
+    const based = !!(await q1('select 1 as x from poyo.place_control where place_id = $1', [b]));
+    const hide = isAdmin(me) || n >= (based ? GAME.flagsBased : GAME.flags);
+    if (hide) await hidePlace(b);
+    return send(res, 200, { hidden: hide, flags: n });
+  }
+  if (isPost && a === 'places' && c === 'confirm') { // otra persona confirma, estando ahí, que un sitio nuevo existe
+    needUser(me);
+    const pl = await q1('select id, lat, lng, status, created_by from poyo.places where id = $1', [b]) || fail(404, 'No existe');
+    if (pl.status !== 'pending') fail(409, 'Este sitio ya está verificado');
+    if (!isAdmin(me)) {
+      if (pl.created_by === me.id) fail(403, 'No puedes confirmar tu propio sitio');
+      const body = await readJSON(req), lat = Number(body.lat), lng = Number(body.lng);
+      assertSpot(body.lat, lat, lng, Number(body.accuracy) || 0);
+      if (meters([lat, lng], [pl.lat, pl.lng]) > GAME.reach) fail(400, 'Estás demasiado lejos del banco (máx. 40 m)');
+    }
+    await q("update poyo.places set status = 'active' where id = $1", [b]);
+    return send(res, 200, await placeStats(b));
   }
 
   // --- juego de bases ---
@@ -500,19 +581,12 @@ async function api(req, res, url) {
     const groupId = await myGroupId(me) || fail(403, 'Únete a un grupo para hacer check-in');
     const body = await readJSON(req);
     const lat = Number(body.lat), lng = Number(body.lng), acc = Number(body.accuracy) || 0;
-    if (!(Math.abs(lat) <= 90 && Math.abs(lng) <= 180) || body.lat == null) fail(400, 'Ubicación no válida');
-    if (acc > GAME.accuracy) fail(400, 'Ubicación poco precisa: acércate a cielo abierto y reintenta');
-    let pl = await q1('select id, lat, lng, type from poyo.places where id = $1', [b]);
-    if (!pl) {
-      const v = b.startsWith('osm-') && validPlace({ ...body.place, id: b }) || fail(404, 'No existe');
-      await q('insert into poyo.places (id, lat, lng, name, type) values ($1, $2, $3, $4, $5) on conflict do nothing', [v.id, v.lat, v.lng, v.name, v.type]);
-      pl = v;
-    }
+    assertSpot(body.lat, lat, lng, acc);
+    const pl = await ensurePlace(b, body);
+    if (pl.status === 'hidden') fail(404, 'No existe');
     if (!['bench', 'picnic'].includes(pl.type)) fail(400, 'Solo se pueden reclamar bancos y mesas de pícnic');
     if (meters([lat, lng], [pl.lat, pl.lng]) > GAME.reach) fail(400, 'Estás demasiado lejos del banco (máx. 40 m)');
-    const last = await q1('select lat, lng, extract(epoch from now() - at) as secs from poyo.checkins where user_id = $1 order by at desc limit 1', [me.id]);
-    if (last && meters([lat, lng], [last.lat, last.lng]) / 1000 / Math.max(last.secs / 3600, 1 / 3600) > GAME.maxSpeedKmh) fail(400, 'Ese desplazamiento no es posible');
-    if ((await q1(`select count(*)::int as n from poyo.checkins where user_id = $1 and day = (now() at time zone 'Europe/Madrid')::date`, [me.id])).n >= GAME.maxPlacesDay) fail(429, 'Máximo 10 bancos distintos al día');
+    await assertMovement(me, lat, lng);
     const meet = (await q1(`select count(distinct user_id)::int as n from poyo.checkins where place_id = $1 and group_id = $2 and user_id <> $3 and at > now() - interval '1 hour'`, [b, groupId, me.id])).n;
     const points = 1 + Math.min(3, meet); // visita + 1 por cada compañero que estuvo en la última hora
     try { await q('insert into poyo.checkins (place_id, user_id, group_id, lat, lng, accuracy, points) values ($1, $2, $3, $4, $5, $6, $7)', [b, me.id, groupId, lat, lng, acc, points]); }
@@ -600,6 +674,21 @@ async function api(req, res, url) {
       const rows = await q(`select rp.id, rp.reason, rp.created_at as "createdAt", ub.username as by, rp.review_id as "reviewId" from poyo.reports rp
         join poyo.profiles ub on ub.id = rp.by_id order by rp.created_at desc`);
       return send(res, 200, await Promise.all(rows.map(async ({ reviewId, ...rp }) => ({ ...rp, review: shapeReview(await q1(REVIEW_SQL + ' where r.id = $1', [reviewId]), true) }))));
+    }
+    if (isGet && b === 'places') { // sitios pendientes de verificar u ocultos
+      const st = url.searchParams.get('status') === 'hidden' ? 'hidden' : 'pending';
+      return send(res, 200, await q(`select p.id, p.name, p.type, p.lat, p.lng, p.status, p.created_at as "createdAt", u.username as author,
+          (select count(*)::int from poyo.place_flags f where f.place_id = p.id) as flags
+        from poyo.places p left join poyo.profiles u on u.id = p.created_by where p.status = $1 order by p.created_at desc limit 100`, [st]));
+    }
+    if (isPost && b === 'places' && c && ['approve', 'restore', 'hide'].includes(parts[3])) {
+      await q1('select id from poyo.places where id = $1', [c]) || fail(404, 'No existe');
+      if (parts[3] === 'hide') await hidePlace(c);
+      else {
+        await q("update poyo.places set status = 'active' where id = $1", [c]);
+        if (parts[3] === 'restore') { await q('delete from poyo.place_flags where place_id = $1', [c]); hidden.delete(c); }
+      }
+      return send(res, 200, await placeStats(c));
     }
     if (req.method === 'DELETE' && b === 'reports' && c) { await q('delete from poyo.reports where id = $1', [c]); return send(res, 200, {}); }
     if (req.method === 'DELETE' && b === 'users' && c) {
