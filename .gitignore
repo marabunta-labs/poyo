@@ -7,3 +7,4 @@ data/osm-cache-3.json
 .env.local
 data/review/
 data/demo/
+supabase/.temp/
