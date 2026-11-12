@@ -472,7 +472,7 @@ function renderPlace(p) {
   if (p.count) sum.append(el('span', { className: 'big', textContent: p.avg.toFixed(1) + ' ' }),
     el('span', { className: 'stars', textContent: stars(p.avg) }), el('span', { textContent: ` (${p.count})` }));
   else sum.textContent = t('Aún sin reseñas. ¡Sé el primero!');
-  c.append(sum, critAvg(p), photoStrip(p.photos, 'photos'));
+  c.append(...[sum, critAvg(p), photoStrip(p.photos, 'photos')].filter(Boolean)); // append(null) pintaría «null»
 
   if (!me) {
     c.append(el('button', { className: 'submit', style: 'margin:14px 0;width:100%', textContent: t('Inicia sesión para reseñar'),
