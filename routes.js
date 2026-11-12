@@ -46,8 +46,10 @@ async function planRoute({ from, to, limit, sites, constraints, route, reach = 3
     const added = new Map();
     for (const c of per) {
       for (const bad of c.gaps.filter((g) => g.meters > c.limit && !failed.has(c.id + g.from.id + '>' + g.to.id))) {
-        const pick = c.near.filter((s) => s.off <= detour && s.off > reach && s.pos > bad.from.pos + 20 && s.pos <= bad.from.pos + c.limit && s.pos < bad.to.pos && !stops.some((x) => x.id === s.id))
-          .sort((x, y) => y.pos - x.pos || x.off - y.off)[0];
+        const free = c.near.filter((s) => s.off <= detour && s.off > reach && s.pos > bad.from.pos + 20 && s.pos < bad.to.pos - 20 && !stops.some((x) => x.id === s.id));
+        // la parada más lejana que alcanzamos dentro del límite; si no hay ninguna «a tiempo», la más cercana al centro del hueco (lo parte en dos aunque no baste)
+        const pick = free.filter((s) => s.pos <= bad.from.pos + c.limit).sort((x, y) => y.pos - x.pos || x.off - y.off)[0]
+          || free.sort((x, y) => Math.abs(x.pos - (bad.from.pos + bad.to.pos) / 2) - Math.abs(y.pos - (bad.from.pos + bad.to.pos) / 2) || x.off - y.off)[0];
         if (pick) added.set(pick.id, pick); else failed.add(c.id + bad.from.id + '>' + bad.to.id);
       }
     }
@@ -56,7 +58,9 @@ async function planRoute({ from, to, limit, sites, constraints, route, reach = 3
     for (const s of stops) s.pos = nearest(r.coords, cum, [s.lat, s.lng]).pos; // posición en la ruta actual: el orden de las paradas debe seguirla
     stops.sort((x, y) => x.pos - y.pos);
   }
-  ({ r, per } = tries.reduce((best, t) => (t.over < best.over - 1 || (Math.abs(t.over - best.over) <= 1 && t.r.distance < best.r.distance) ? t : best)));
+  // coste de cada ruta probada: metros que se pasa de los límites + medio metro por cada metro de desvío (un rodeo largo no compensa una mejora pequeña)
+  const base = tries[0].r.distance, cost = (t) => t.over + 0.5 * Math.max(0, t.r.distance - base);
+  ({ r, per } = tries.reduce((best, t) => (cost(t) < cost(best) ? t : best)));
   const total = Math.round(cumulative(r.coords).at(-1));
   const gaps = per.flatMap((c) => c.gaps), maxGaps = Object.fromEntries(per.map((c) => [c.id, Math.max(...c.gaps.map((g) => g.meters))]));
   const seen = new Set();

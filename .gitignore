@@ -8,3 +8,8 @@ data/osm-cache-3.json
 data/review/
 data/demo/
 supabase/.temp/
+promo/node_modules/
+promo/frames/
+promo/out/
+promo/*.mp4
+promo/*.png

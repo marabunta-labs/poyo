@@ -63,3 +63,18 @@ test('una restricción cumple y otra no: ok=false y el hueco dice de qué tipo',
   ] });
   assert.equal(r.ok, false); assert.deepEqual([...new Set(r.gaps.map((g) => g.kind))], ['fountain']);
 });
+
+test('si los bancos están todos hacia el final del hueco, parte el hueco igualmente (aunque no llegue al límite)', async () => {
+  const f = fake();
+  const r = await planRoute({ from: at(0), to: at(600), limit: 250, sites: [site('tarde', 400, 60)], route: f.route });
+  assert.equal(r.ok, false); // 404 m hasta el banco: sigue pasándose del límite…
+  assert.deepEqual(r.stops.map((s) => s.id), ['tarde']); // …pero el hueco de 600 m queda partido
+  assert.ok(r.maxGap < 600);
+});
+
+test('un rodeo largo que apenas mejora no se acepta', async () => {
+  const f = fake();
+  // el banco está a 140 m de la ruta: ir y volver cuesta ~280 m de más para ganar ~10 m de tramo
+  const r = await planRoute({ from: at(0), to: at(300), limit: 250, sites: [site('rodeo', 250, 140)], route: f.route });
+  assert.equal(r.stops.length, 0); assert.equal(r.distance < 310, true); // se queda con la ruta directa
+});
