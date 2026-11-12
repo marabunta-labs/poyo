@@ -41,6 +41,7 @@
   #flt .row button { padding:6px 10px; font-size:13px; }
   #fmap { min-height:0; background:#222; }
   @media (max-width:700px) { #flt .fbody { grid-template-columns:1fr; grid-template-rows:auto 1fr; } }
+  .ovl .top select, .ovl .top input { font:inherit; color:var(--fg); background:var(--card); border:1px solid var(--line); border-radius:6px; padding:6px; color-scheme:dark; }
   #grid { overflow:auto; padding:12px 16px; display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:10px; align-content:start; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:8px; overflow:hidden; cursor:pointer; }
   .card:hover { border-color:var(--mut); }
@@ -103,6 +104,12 @@
     <span class="mut">·</span>
     <button data-k="" class="on">Todo tipo</button><button data-k="b">🪑 Banco</button><button data-k="f">💧 Fuente</button><button data-k="s">🛒 Tienda</button><button data-k="p">🧺 Mesa</button>
     <button id="revx">Cerrar ✕</button></div>
+  <div class="top">
+    <select id="rcity"></select>
+    <label class="mut">Desde <input type="date" id="rfrom"></label><label class="mut">Hasta <input type="date" id="rto"></label>
+    <input type="search" id="rtext" placeholder="Nombre o coordenadas">
+    <label class="mut"><input type="checkbox" id="rphoto"> Solo con foto</label>
+    <button id="rclear">Limpiar</button></div>
   <div id="grid"></div>
 </div>
 <div id="flt" class="ovl" hidden>
@@ -274,8 +281,14 @@ $('#undo').onclick = async () => {
 };
 // ---- pantalla de revisados: ver y corregir ----
 let reviewed = [], revFilter = 'all', revKind = '';
+const cityOf = (r) => Object.keys(zones).find((z) => z !== 'todas' && r.lat >= zones[z][0] && r.lat <= zones[z][2] && r.lng >= zones[z][1] && r.lng <= zones[z][3]) || 'otra';
 function renderRev() {
-  const list = reviewed.filter((r) => (revFilter === 'all' || r.verdict === revFilter) && (!revKind || r.kind === revKind));
+  const city = $('#rcity').value, text = $('#rtext').value.trim().toLowerCase();
+  const from = $('#rfrom').value ? new Date($('#rfrom').value).getTime() : 0;
+  const to = $('#rto').value ? new Date($('#rto').value).getTime() + 864e5 : Infinity; // «hasta» incluye ese día
+  const list = reviewed.filter((r) => (revFilter === 'all' || r.verdict === revFilter) && (!revKind || r.kind === revKind)
+    && (!city || cityOf(r) === city) && r.at >= from && r.at < to && (!$('#rphoto').checked || r.crop)
+    && (!text || `${r.name || ''} ${r.lat.toFixed(5)}, ${r.lng.toFixed(5)}`.toLowerCase().includes(text)));
   $('#revn').textContent = `${list.length} de ${reviewed.length}`;
   $('#grid').replaceChildren(...list.map((r) => {
     const c = document.createElement('div'); c.className = 'card';
@@ -286,7 +299,15 @@ function renderRev() {
   document.querySelectorAll('#rev [data-f]').forEach((b) => b.classList.toggle('on', b.dataset.f === revFilter));
   document.querySelectorAll('#rev [data-k]').forEach((b) => b.classList.toggle('on', b.dataset.k === revKind));
 }
-$('#revbtn').onclick = async () => { $('#rev').hidden = false; reviewed = await api('/api/reviewed'); renderRev(); };
+$('#revbtn').onclick = async () => {
+  $('#rev').hidden = false; reviewed = await api('/api/reviewed');
+  const sel = $('#rcity').value;
+  $('#rcity').innerHTML = '<option value="">Toda ciudad</option>' + [...Object.keys(zones).filter((z) => z !== 'todas'), 'otra'].map((z) => `<option>${z}</option>`).join('');
+  $('#rcity').value = sel; renderRev();
+};
+['rcity', 'rfrom', 'rto', 'rphoto'].forEach((id) => $('#' + id).onchange = renderRev);
+$('#rtext').oninput = renderRev;
+$('#rclear').onclick = () => { $('#rcity').value = $('#rfrom').value = $('#rto').value = $('#rtext').value = ''; $('#rphoto').checked = false; revFilter = 'all'; revKind = ''; renderRev(); };
 $('#revx').onclick = () => { $('#rev').hidden = true; };
 document.querySelectorAll('#rev [data-f]').forEach((b) => b.onclick = () => { revFilter = b.dataset.f; renderRev(); });
 document.querySelectorAll('#rev [data-k]').forEach((b) => b.onclick = () => { revKind = b.dataset.k; renderRev(); });

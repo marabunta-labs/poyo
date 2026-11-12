@@ -2,6 +2,8 @@
 
 Mapa de bancos y sitios para sentarse, con notas, reseñas, fotos y amigos.
 
+**En producción: https://poyo-megc.onrender.com/**
+
 ```
 npm start   # http://localhost:3000
 ```
@@ -43,6 +45,10 @@ Poyo no guarda nada en disco: los datos viven en el esquema `poyo` del proyecto 
 | `TRUST_PROXY=1` | Usa `X-Forwarded-For` para el límite de peticiones (detrás de un proxy) |
 
 `npm install && npm start`. Pruebas: `DATABASE_URL=… ADMIN_DATABASE_URL=… node --test test/api.test.js` (necesita el Postgres local de `../marabunta-db/test/run_local.sh`) y `node --test test/i18n.test.js`.
+
+## Desplegar (Render)
+Poyo está en Render (plan gratuito, Frankfurt): https://poyo-megc.onrender.com/. Se define en `render.yaml` (Blueprint: *New → Blueprint* y elige este repo); solo hay que pegar los secretos `DATABASE_URL`, `SUPABASE_ANON_KEY` y `ADMINS`. Render comprueba `/api/config` y redespliega con cada push.
+En el plan gratuito el servicio se duerme tras ~15 min sin visitas: la primera carga después puede tardar ~1 min.
 
 ## Desplegar (Docker)
 ```
