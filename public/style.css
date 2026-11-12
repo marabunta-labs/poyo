@@ -84,6 +84,9 @@ input, textarea, select { font:inherit; padding:8px; border:1px solid var(--line
 .rphotos img { height:70px; border-radius:8px; cursor:zoom-in; }
 .link { background:none; border:0; padding:0; color:var(--green); font-weight:700; text-decoration:underline; }
 .cl { border-radius:50%; background:#2f7d4fd9; color:#fff; font-weight:700; font-size:12px; display:grid; place-items:center; border:2px solid #fff; box-shadow:0 1px 6px #0005; cursor:pointer; }
+.gamebox { margin:10px 0; padding:10px; border:1px solid var(--line); border-radius:10px; }
+.dot { display:inline-block; width:12px; height:12px; border-radius:50%; vertical-align:middle; margin-right:4px; }
+.rk { padding:3px 0; font-size:14px; }
 .badge.demo { background:#fff3cd; color:#7a5b00; }
 .badge { font-size:11px; background:#dff1e5; color:var(--green); border-radius:99px; padding:1px 7px; margin-left:4px; }
 .tabs { display:flex; gap:4px; margin:6px 0 12px; }

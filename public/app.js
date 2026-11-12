@@ -80,12 +80,13 @@ let me = null, adding = false;
 // ---------- marcadores ----------
 const color = (p) => (!p.count ? '#8a8f8b' : p.avg >= 4 ? '#2f7d4f' : p.avg >= 3 ? '#c9a227' : '#c0392b');
 let emojiMode = pref('emoji', '0') === '1';
+const ring = (p) => (p.baseColor ? `;box-shadow:0 0 0 2px #fff,0 0 0 5px ${p.baseColor}` : ''); // aro del grupo que manda en el banco
 const icon = (p) => emojiMode ? L.divIcon({
   className: '', iconSize: [32, 32], iconAnchor: [16, 16],
-  html: `<div class="emo${p.count ? '' : ' empty'}"><span class="e">${EMOJI[p.type] || EMOJI.other}</span>${p.count ? `<b style="background:${color(p)}">${p.avg.toFixed(1)}</b>` : ''}</div>`,
+  html: `<div class="emo${p.count ? '' : ' empty'}" style="border-radius:50%${ring(p)}"><span class="e">${EMOJI[p.type] || EMOJI.other}</span>${p.count ? `<b style="background:${color(p)}">${p.avg.toFixed(1)}</b>` : ''}</div>`,
 }) : L.divIcon({
   className: '', iconSize: [30, 30], iconAnchor: [15, 30],
-  html: `<div class="pin${p.count ? '' : ' empty'}" style="background:${color(p)}"><span>${EMOJI[p.type] || EMOJI.other}</span>${p.count ? `<b>${p.avg.toFixed(1)}</b>` : ''}</div>`,
+  html: `<div class="pin${p.count ? '' : ' empty'}" style="background:${color(p)}${ring(p)}"><span>${EMOJI[p.type] || EMOJI.other}</span>${p.count ? `<b>${p.avg.toFixed(1)}</b>` : ''}</div>`,
 });
 const shown = (p) => visible.has(GROUP[p.type]);
 function upsert(p) {
@@ -424,7 +425,7 @@ async function loadPlace(id) {
   content().append(el('p', { className: 'muted', textContent: t('Cargando…') }));
   const vid = viewId;
   let detail = { ...cur, reviews: [] };
-  if (!id.startsWith('osm-') || cur.count) { try { detail = await api('GET', '/places/' + id); } catch {} }
+  if (!id.startsWith('osm-') || cur.count || cur.baseColor) { try { detail = await api('GET', '/places/' + id); } catch {} }
   if (!stale(vid)) renderPlace(detail);
 }
 
@@ -484,6 +485,33 @@ function reviewFields(mine, type) {
     pickFile, thumbs, err] };
 }
 
+// Juego de bases: quién manda en este banco y el botón de check-in (hay que estar a menos de 40 m)
+function gameBox(p, note) {
+  if (!['bench', 'picnic'].includes(p.type)) return null;
+  const box = el('div', { className: 'gamebox' });
+  box.append(p.control
+    ? el('div', { className: 'base' }, el('span', { className: 'dot', style: `background:${p.control.group.color}` }),
+      el('b', { textContent: t('Base de {name} · {n} pts', { name: p.control.group.name, n: p.control.score }) }),
+      p.control.rivalScore ? el('small', { className: 'muted', textContent: ' · ' + t('Rival: {n} pts', { n: p.control.rivalScore }) }) : null)
+    : el('div', { className: 'muted', textContent: t('Nadie manda aquí todavía') }));
+  if (note) box.append(el('div', { className: 'okk', textContent: note }));
+  if (me && !me.needsProfile) {
+    const msg = el('div', { className: 'err' });
+    box.append(el('button', { className: 'btn fill', style: 'margin-top:6px', textContent: t('📍 Hacer check-in'), onclick: () => {
+      msg.textContent = '';
+      if (!navigator.geolocation) return (msg.textContent = t('Tu navegador no da la ubicación'));
+      navigator.geolocation.getCurrentPosition(async (pos) => {
+        try {
+          const r = await api('POST', `/places/${p.id}/checkin`, { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy,
+            place: { lat: p.lat, lng: p.lng, name: p.name, type: p.type } });
+          upsert(r.place); box.replaceWith(gameBox({ ...p, control: r.control }, t('+{n} puntos para tu grupo', { n: r.points })));
+        } catch (x) { msg.textContent = x.message; }
+      }, () => (msg.textContent = t('No se pudo obtener tu ubicación')), { enableHighAccuracy: true, timeout: 15000 });
+    } }), msg);
+  }
+  return box;
+}
+
 function critAvg(p) { // media por criterio, de las reseñas que lo puntuaron
   const acc = {};
   p.reviews.forEach((r) => Object.entries(r.ratings || {}).forEach(([k, v]) => (acc[k] ||= []).push(v)));
@@ -502,7 +530,7 @@ function renderPlace(p) {
   if (p.count) sum.append(el('span', { className: 'big', textContent: p.avg.toFixed(1) + ' ' }),
     el('span', { className: 'stars', textContent: stars(p.avg) }), el('span', { textContent: ` (${p.count})` }));
   else sum.textContent = t('Aún sin reseñas. ¡Sé el primero!');
-  c.append(...[sum, critAvg(p), photoStrip(p.photos, 'photos')].filter(Boolean)); // append(null) pintaría «null»
+  c.append(...[sum, critAvg(p), gameBox(p), photoStrip(p.photos, 'photos')].filter(Boolean)); // append(null) pintaría «null»
 
   if (!me) {
     c.append(el('button', { className: 'submit', style: 'margin:14px 0;width:100%', textContent: t('Inicia sesión para reseñar'),
@@ -738,6 +766,46 @@ map.on('click', (e) => {
   };
   c.append(form);
 });
+
+// ---------- juego de bases: mi grupo y rankings ----------
+const openGame = async () => { if (await requireLogin(t('Inicia sesión para jugar'))) visit('game', loadGame); };
+async function loadGame() {
+  const c = content(), vid = viewId;
+  let g, rk;
+  try { [g, rk] = await Promise.all([api('GET', '/groups/mine'), api('GET', '/game/ranking')]); }
+  catch (x) { c.append(el('div', { className: 'err', textContent: x.message })); return; }
+  if (stale(vid)) return;
+  const dot = (col) => el('span', { className: 'dot', style: `background:${col}` });
+  const err = el('div', { className: 'err' });
+  const post = (path, body) => async (ev) => { ev.preventDefault(); err.textContent = ''; try { await api('POST', path, body()); loadGame(); } catch (x) { err.textContent = x.message; } };
+  c.append(el('h2', { textContent: t('🏴 Juego de bases') }), el('div', { className: 'sub', textContent: t('Frecuenta los bancos con tu grupo y conviértelos en vuestra base.') }));
+  if (g) {
+    c.append(el('h3', {}, dot(g.color), ' ' + g.name, el('small', { className: 'muted', textContent: ` · ${g.score} pts` })),
+      el('div', { textContent: t('Código para invitar: {code}', { code: g.code }) }),
+      el('h4', { textContent: t('Miembros') }), ...g.members.map(userRow),
+      el('h4', { textContent: t('Vuestras bases') }),
+      ...(g.bases.length ? g.bases.map((b) => resRow(`${EMOJI[b.type]} ${b.name || TYPES[b.type]}`, () => { $('panel').hidden = true; goTo(b.lat, b.lng, b.id); }))
+        : [el('p', { className: 'muted', textContent: t('Todavía sin bases: haced check-in en un banco cercano.') })]),
+      el('button', { className: 'btn danger', style: 'margin:10px 0', textContent: t('Salir del grupo'), onclick: async () => {
+        if (confirm(t('¿Salir del grupo?'))) { await api('POST', '/groups/leave'); loadGame(); }
+      } }));
+  } else {
+    const name = el('input', { placeholder: t('Nombre del grupo'), maxLength: 24, required: true }), color = el('input', { type: 'color', value: '#2f7d4f' });
+    const code = el('input', { placeholder: t('Código'), maxLength: 6, required: true, style: 'text-transform:uppercase' });
+    c.append(el('h3', { textContent: t('Crear un grupo') }),
+      el('form', { onsubmit: post('/groups', () => ({ name: name.value, color: color.value })) }, name, color, el('button', { className: 'submit', textContent: t('Crear') })),
+      el('h3', { textContent: t('Unirme con un código') }),
+      el('form', { onsubmit: post('/groups/join', () => ({ code: code.value })) }, code, el('button', { className: 'submit', textContent: t('Unirme') })), err);
+  }
+  c.append(el('h3', { textContent: t('Ranking (14 días)') }), el('h4', { textContent: t('Grupos') }),
+    ...(rk.groups.length ? rk.groups.map((x, i) => el('div', { className: 'rk' }, dot(x.color), ` ${i + 1}. `, el('b', { textContent: x.name }),
+      el('small', { className: 'muted', textContent: ' · ' + t('{n} pts · {b} bases · {m} miembros', { n: x.score, b: x.bases, m: x.members }) })))
+      : [el('p', { className: 'muted', textContent: t('Aún no hay check-ins') })]),
+    el('h4', { textContent: t('Personas') }),
+    ...rk.users.map((u, i) => el('button', { className: 'plain urow', onclick: () => openProfile(u.username) }, `${i + 1}. `, el('b', { textContent: '@' + u.username }), u.isSeed ? demoBadge() : null,
+      el('small', { className: 'muted', textContent: ' · ' + t('{n} pts', { n: u.points }) }))));
+}
+$('nav-game').onclick = openGame;
 
 // ---------- ruta con paradas: sin tramos largos sin banco (o sin fuente) ----------
 const route = { from: null, to: null, kinds: ['bench'], gap: 250, picking: null, result: null, layer: L.layerGroup().addTo(map) };

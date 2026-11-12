@@ -65,6 +65,47 @@ create table if not exists poyo.reports (
   unique (review_id, by_id)
 );
 
+-- Juego de bases (docs/juego-bases.md): grupos, check-ins con puntos y quién manda en cada banco.
+create table if not exists poyo.groups (
+  id uuid primary key default gen_random_uuid(),
+  name text not null check (char_length(name) between 2 and 24),
+  color text not null check (color ~ '^#[0-9a-f]{6}$'),
+  code text not null unique check (code ~ '^[A-Z0-9]{6}$'),   -- para invitar: quien lo tiene se une
+  created_by uuid references poyo.profiles(id) on delete set null,
+  created_at timestamptz not null default now()
+);
+create unique index if not exists poyo_groups_name on poyo.groups (lower(name));
+
+create table if not exists poyo.group_members (
+  group_id uuid not null references poyo.groups(id) on delete cascade,
+  user_id uuid not null unique references poyo.profiles(id) on delete cascade,   -- un grupo por persona
+  joined_at timestamptz not null default now(),
+  primary key (group_id, user_id)
+);
+
+create table if not exists poyo.checkins (
+  id uuid primary key default gen_random_uuid(),
+  place_id text not null references poyo.places(id) on delete cascade,
+  user_id uuid not null references poyo.profiles(id) on delete cascade,
+  group_id uuid not null references poyo.groups(id) on delete cascade,
+  at timestamptz not null default now(),
+  lat double precision not null,
+  lng double precision not null,
+  accuracy real,
+  points smallint not null check (points between 1 and 9),
+  day date not null default (now() at time zone 'Europe/Madrid')::date,
+  unique (place_id, user_id, day)
+);
+create index if not exists poyo_checkins_place on poyo.checkins (place_id, at desc);
+create index if not exists poyo_checkins_user on poyo.checkins (user_id, at desc);
+create index if not exists poyo_checkins_group on poyo.checkins (group_id, at desc);
+
+create table if not exists poyo.place_control (   -- grupo que manda ahora en cada banco
+  place_id text primary key references poyo.places(id) on delete cascade,
+  group_id uuid not null references poyo.groups(id) on delete cascade,
+  since timestamptz not null default now()
+);
+
 -- Fotos de las que nadie se ocupó al borrar (moderación, cuentas borradas): se purgan con scripts/purge-photos.js
 create table if not exists poyo.photo_trash (
   path text primary key,
@@ -102,5 +143,13 @@ create policy poyo_app_all on poyo.reviews for all to poyo_app using (true) with
 create policy poyo_app_all on poyo.friendships for all to poyo_app using (true) with check (true);
 create policy poyo_app_all on poyo.reports for all to poyo_app using (true) with check (true);
 create policy poyo_app_all on poyo.photo_trash for all to poyo_app using (true) with check (true);
+alter table poyo.groups enable row level security;
+alter table poyo.group_members enable row level security;
+alter table poyo.checkins enable row level security;
+alter table poyo.place_control enable row level security;
+create policy poyo_app_all on poyo.groups for all to poyo_app using (true) with check (true);
+create policy poyo_app_all on poyo.group_members for all to poyo_app using (true) with check (true);
+create policy poyo_app_all on poyo.checkins for all to poyo_app using (true) with check (true);
+create policy poyo_app_all on poyo.place_control for all to poyo_app using (true) with check (true);
 
 commit;

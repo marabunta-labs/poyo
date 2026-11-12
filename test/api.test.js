@@ -85,6 +85,51 @@ test('cuentas demo: la API las marca con isSeed', async () => {
   await admin.query("update poyo.profiles set is_seed = false where username = 'cris'");
 });
 
+test('juego de bases: grupos, check-in, control y antitrampas', async () => {
+  const place = { lat: 37.17, lng: -3.6, name: 'Banco del juego', type: 'bench' };
+  const at = (dlat = 0, acc = 5) => ({ lat: 37.17 + dlat, lng: -3.6, accuracy: acc, place });
+  assert.equal((await call('POST', '/places/osm-900/checkin', at(), 'ana')).status, 403); // sin grupo
+  const g = await call('POST', '/groups', { name: 'Los Bancos', color: '#aa3300' }, 'ana'); assert.equal(g.status, 201);
+  assert.match(g.body.code, /^[A-Z0-9]{6}$/);
+  assert.equal((await call('POST', '/groups', { name: 'Otro' }, 'ana')).status, 409); // ya está en uno
+  assert.equal((await call('POST', '/groups', { name: 'los bancos' }, 'cris')).status, 409); // nombre repetido sin mirar mayúsculas
+  assert.equal((await call('POST', '/groups/join', { code: 'ZZZZZZ' }, 'beto')).status, 404);
+  assert.equal((await call('POST', '/groups/join', { code: g.body.code.toLowerCase() }, 'beto')).body.members.length, 2);
+  assert.equal((await call('POST', '/groups', { name: 'Rivales' }, 'cris')).status, 201);
+
+  assert.equal((await call('POST', '/places/osm-900/checkin', at(0.001), 'ana')).status, 400); // a ~110 m
+  assert.equal((await call('POST', '/places/osm-900/checkin', at(0, 50), 'ana')).status, 400); // GPS impreciso
+  const c1 = await call('POST', '/places/osm-900/checkin', at(), 'ana');
+  assert.equal(c1.status, 201); assert.equal(c1.body.points, 1); assert.equal(c1.body.control.group.name, 'Los Bancos');
+  assert.equal((await call('POST', '/places/osm-900/checkin', at(), 'ana')).status, 409); // una vez al día
+  const c2 = await call('POST', '/places/osm-900/checkin', at(), 'beto');
+  assert.equal(c2.body.points, 2); assert.equal(c2.body.meet, 1); // encuentro: compañera en la última hora
+  assert.equal((await call('GET', '/places')).body.find((p) => p.id === 'osm-900').baseColor, '#aa3300');
+
+  // los rivales mandan solo si superan en un 20 %: primero poco, luego mucho
+  const cris = (await call('GET', '/groups/mine', null, 'cris')).body;
+  await admin.query(`insert into poyo.checkins (place_id, user_id, group_id, lat, lng, points, day) values ('osm-900', $1, $2, 37.17, -3.6, 1, current_date - 3)`, [users.cris.id, cris.id]);
+  assert.equal((await call('POST', '/places/osm-900/checkin', at(), 'cris')).body.control.group.name, 'Los Bancos'); // 2 puntos de Cris < 1,2 × 3
+  await admin.query(`insert into poyo.checkins (place_id, user_id, group_id, lat, lng, points, day) values ('osm-900', $1, $2, 37.17, -3.6, 9, current_date - 1)`, [users.cris.id, cris.id]);
+  await admin.query(`update poyo.checkins set at = now() - interval '1 hour 5 minutes' where day = current_date - 1`);
+  const d = await call('GET', '/places/osm-900', null, 'ana'); assert.equal(d.body.control.group.name, 'Los Bancos'); // aún no se ha evaluado
+  await admin.query(`delete from poyo.checkins where user_id = $1 and day = current_date`, [users.cris.id]); // Cris repite su check-in de hoy
+  assert.equal((await call('POST', '/places/osm-900/checkin', at(), 'cris')).body.control.group.name, 'Rivales');
+
+  // velocidad imposible: otro banco a ~111 km segundos después
+  const far = { lat: 38.17, lng: -3.6, accuracy: 5, place: { lat: 38.17, lng: -3.6, name: 'Lejos', type: 'bench' } };
+  assert.equal((await call('POST', '/places/osm-901/checkin', far, 'ana')).status, 400);
+  // solo bancos y mesas
+  const fuente = { lat: 37.17, lng: -3.6, accuracy: 5, place: { lat: 37.17, lng: -3.6, name: 'Fuente', type: 'fountain' } };
+  assert.equal((await call('POST', '/places/osm-902/checkin', fuente, 'ana')).status, 400);
+
+  const rk = (await call('GET', '/game/ranking')).body;
+  assert.ok(rk.groups.length === 2 && rk.groups[0].score >= rk.groups[1].score && rk.users[0].points >= 1);
+  assert.equal((await call('POST', '/groups/leave', null, 'beto')).status, 200);
+  assert.equal((await call('POST', '/groups/leave', null, 'ana')).status, 200);
+  assert.equal((await call('GET', '/groups/mine', null, 'ana')).body, null);
+});
+
 test('amistades: solicitud, aceptar, rechazo, feed y perfil', async () => {
   assert.equal((await call('POST', '/friends/beto', null, 'ana')).body.relation, 'sent');
   { const x = await call('POST', '/friends/Ana.G', null, 'beto'); assert.equal(x.body.relation, 'friends', JSON.stringify(x)); } // beto acepta

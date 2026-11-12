@@ -4,13 +4,13 @@ Un banco (o mesa de pícnic) se convierte en la **base** de un grupo de amigos. 
 
 ## Reglas
 
-- **Grupos**: 2 a 5 personas que ya son amigas en Poyo. Una persona está en un solo grupo a la vez. El grupo tiene nombre y color.
+- **Grupos**: 2 a 5 personas. Una persona está en un solo grupo a la vez. El grupo tiene nombre, color y un **código de 6 caracteres**: quien lo recibe se une (así nadie entra sin querer).
 - **Check-in**: desde el móvil, a menos de 40 m del banco, con la ubicación del dispositivo. Da puntos de presencia al **grupo** en ese banco.
   - Visita: **1 punto**, una vez al día por persona y banco (y 4 h de espera entre check-ins en el mismo banco).
   - Encuentro: **+1 por cada otro miembro** que haya hecho check-in en el mismo banco en la misma hora (máx. +3). Premia quedar de verdad.
   - **Banco nuevo con foto**: **+5**, una vez por banco. Hay que estar a menos de 40 m, la foto es obligatoria y no puede haber otro banco a menos de 15 m. Si lo reportan como falso, se pierde el bonus.
 - **Quién manda**: el grupo con más puntos en los últimos 14 días. Cada punto pierde peso con la edad (vida media de 5 días), así que dejar de ir se nota poco a poco.
-- **Conquista**: para quitar una base hay que superar al grupo actual en un 20 %. El grupo que la pierde ve un aviso.
+- **Conquista**: el control se guarda (`place_control`) y se reevalúa en cada check-in: otro grupo toma la base solo si supera al actual en un 20 %.
 - **Solo cuentan sitios con vida**: para reclamar un banco, debe tener al menos una reseña o foto (o ser nuevo con foto, ver arriba).
 - **Rankings**: grupos y usuarios con más puntos (14 días), en toda España o en la zona visible del mapa.
 - **Privacidad**: nunca se muestra dónde está nadie ahora; solo qué grupo manda en un banco y cuántos puntos tiene.
@@ -59,17 +59,17 @@ create index poyo_checkins_place on poyo.checkins (place_id, at desc);
 create index poyo_checkins_group on poyo.checkins (group_id, at desc);
 ```
 
-El control de cada banco no se guarda: se calcula al vuelo con una consulta sobre `checkins` de los últimos 14 días (con el peso por edad). Si hiciera falta velocidad, se cachea en `poyo.place_control`.
+Quién manda en cada banco se guarda en `poyo.place_control` y se reevalúa en cada check-in con la puntuación de los últimos 14 días (con el peso por edad).
 
 ## API
 
 | Método y ruta | Qué hace |
 |---|---|
-| `POST /api/groups` · `POST /api/groups/:id/invite/:user` · `POST /api/groups/leave` | crear grupo, invitar a un amigo, salir |
+| `POST /api/groups` · `POST /api/groups/join {code}` · `POST /api/groups/leave` · `GET /api/groups/mine` | crear grupo, unirse con código, salir, ver el mío |
 | `POST /api/places/:id/checkin` `{lat, lng, accuracy}` | check-in; devuelve puntos ganados y quién manda |
 | `GET /api/places/:id` (ya existe) | añade `control: { group, score, nextRival }` |
-| `GET /api/game/map?s&w&n&e` | bancos con dueño en la zona: `[id, lat, lng, groupId, color]` |
-| `GET /api/game/ranking?scope=global\|bbox` | grupos y usuarios con más puntos |
+| `GET /api/places` (ya existe) | añade `baseColor` y `baseGroup`: el marcador lleva el aro del grupo que manda |
+| `GET /api/game/ranking` | grupos y personas con más puntos (14 días) |
 
 ## Pantallas
 
@@ -85,8 +85,8 @@ El control de cada banco no se guarda: se calcula al vuelo con una consulta sobr
 
 ## Fases
 
-1. **Núcleo**: grupos, check-in, puntos, control y aros en el mapa. *(requiere migración en producción)*
-2. **Rankings** de grupos y usuarios + insignias («Madrugador», «Fiel 30 días»…).
+1. **Núcleo** *(hecho)*: grupos con código, check-in con antitrampas, puntos, control, aros en el mapa y ranking global de grupos y personas. Requiere la migración de las tablas en producción.
+2. **Rankings por zona** + insignias («Madrugador», «Fiel 30 días»…) y aviso «tu base está en peligro».
 3. **Revisión de sitios**: `status`, «sin verificar», «Ya no existe», bonus por banco nuevo con foto.
 
 ## Decisiones tomadas

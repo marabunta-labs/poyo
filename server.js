@@ -106,6 +106,8 @@ const shapeReview = ({ _uid, ...r }, withPlace) => (withPlace ? r : { ...r, plac
 
 const STATS_SQL = `select p.id, p.lat, p.lng, p.name, p.type, count(r.id)::int as count,
     round(avg(r.rating)::numeric, 1)::float as avg,
+    (select g.color from poyo.place_control pc join poyo.groups g on g.id = pc.group_id where pc.place_id = p.id) as "baseColor",
+    (select g.name from poyo.place_control pc join poyo.groups g on g.id = pc.group_id where pc.place_id = p.id) as "baseGroup",
     coalesce((select array_agg(ph) from (select unnest(r2.photos) as ph from poyo.reviews r2 where r2.place_id = p.id order by r2.created_at desc limit 6) x), '{}') as photos
   from poyo.places p left join poyo.reviews r on r.place_id = p.id`;
 const placeStats = (id) => q1(STATS_SQL + ' where p.id = $1 group by p.id', [id]);
@@ -309,6 +311,41 @@ async function geocode(url) {
 }
 
 
+// ---------- juego de bases (docs/juego-bases.md) ----------
+const GAME = { reach: 40, accuracy: 30, maxSpeedKmh: 150, maxPlacesDay: 10, groupMax: 5, rival: 1.2, days: 14, halfLife: 5 };
+// puntos de un grupo en un banco: los de los últimos 14 días, cada uno con la mitad de peso cada 5 días
+const WEIGHT = `c.points * power(0.5::float8, (extract(epoch from now() - c.at) / 86400 / ${GAME.halfLife})::float8)`;
+const scoresAt = (placeId) => q(`select c.group_id as id, g.name, g.color, sum(${WEIGHT})::float as score from poyo.checkins c join poyo.groups g on g.id = c.group_id
+  where c.place_id = $1 and c.at > now() - interval '${GAME.days} days' group by c.group_id, g.name, g.color order by score desc`, [placeId]);
+async function controlOf(placeId) {
+  const held = await q1('select group_id from poyo.place_control where place_id = $1', [placeId]);
+  if (!held) return null;
+  const rows = await scoresAt(placeId);
+  const holder = rows.find((r) => r.id === held.group_id);
+  const g = holder || await q1('select id, name, color from poyo.groups where id = $1', [held.group_id]);
+  const rival = rows.find((r) => r.id !== held.group_id);
+  return { group: { id: g.id, name: g.name, color: g.color }, score: Math.round((holder?.score || 0) * 10) / 10, rivalScore: Math.round((rival?.score || 0) * 10) / 10 };
+}
+// tras un check-in: manda quien ya mandaba, salvo que otro grupo lo supere en un 20 %
+async function updateControl(placeId) {
+  const rows = await scoresAt(placeId), top = rows[0];
+  const held = await q1('select group_id from poyo.place_control where place_id = $1', [placeId]);
+  const cur = held && rows.find((r) => r.id === held.group_id);
+  if (!held) await q('insert into poyo.place_control (place_id, group_id) values ($1, $2) on conflict (place_id) do nothing', [placeId, top.id]);
+  else if (top.id !== held.group_id && top.score > (cur?.score || 0) * GAME.rival) await q('update poyo.place_control set group_id = $2, since = now() where place_id = $1', [placeId, top.id]);
+  return controlOf(placeId);
+}
+const myGroupId = async (me) => (await q1('select group_id from poyo.group_members where user_id = $1', [me.id]))?.group_id;
+async function groupView(id) {
+  const g = await q1('select id, name, color, code from poyo.groups where id = $1', [id]);
+  const members = await q('select u.id, u.username, u.bio, u.avatar, u.is_seed from poyo.group_members m join poyo.profiles u on u.id = m.user_id where m.group_id = $1 order by m.joined_at', [id]);
+  const bases = await q(`select p.id, p.name, p.type, p.lat, p.lng from poyo.place_control pc join poyo.places p on p.id = pc.place_id where pc.group_id = $1 order by pc.since desc limit 30`, [id]);
+  const pts = await q1(`select coalesce(sum(${WEIGHT}), 0)::float as s from poyo.checkins c where c.group_id = $1 and c.at > now() - interval '${GAME.days} days'`, [id]);
+  return { ...g, members: members.map(publicUser), bases, score: Math.round(pts.s * 10) / 10 };
+}
+const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const newCode = () => Array.from(crypto.randomBytes(6), (b) => CODE_CHARS[b % CODE_CHARS.length]).join('');
+
 // ---------- rutas ----------
 async function relation(meId, otherId) {
   if (!meId) return 'none';
@@ -374,7 +411,7 @@ async function api(req, res, url) {
     const others = reviews.some((r) => r._uid !== me?.id);
     const created = await q1('select created_by from poyo.places where id = $1', [b]);
     const canDelete = !!me && !me.needsProfile && b.startsWith('u-') && (isAdmin(me) || (created.created_by === me.id && !others));
-    return send(res, 200, { ...p, canDelete, reviews: reviews.map((r) => ({ ...shapeReview(r, false), byFriend: fr.has(r._uid) })) });
+    return send(res, 200, { ...p, canDelete, control: await controlOf(b), reviews: reviews.map((r) => ({ ...shapeReview(r, false), byFriend: fr.has(r._uid) })) });
   }
   if (isPost && a === 'places' && !b) {
     needUser(me);
@@ -401,6 +438,69 @@ async function api(req, res, url) {
         photos = case when cardinality(excluded.photos) > 0 then excluded.photos else poyo.reviews.photos end`,
       [b, me.id, rating, ratings, clean(body.text, 600), photos]);
     return send(res, 201, await placeStats(b));
+  }
+
+  // --- juego de bases ---
+  if (isGet && a === 'game' && b === 'ranking') {
+    const groups = await q(`select g.id, g.name, g.color, (select count(*)::int from poyo.group_members m where m.group_id = g.id) as members,
+        (select count(*)::int from poyo.place_control pc where pc.group_id = g.id) as bases, round(sum(${WEIGHT})::numeric, 1)::float as score
+      from poyo.groups g join poyo.checkins c on c.group_id = g.id where c.at > now() - interval '${GAME.days} days' group by g.id order by score desc limit 20`);
+    const users = await q(`select u.id, u.username, u.bio, u.avatar, u.is_seed, sum(c.points)::int as points from poyo.checkins c join poyo.profiles u on u.id = c.user_id
+      where c.at > now() - interval '${GAME.days} days' group by u.id order by points desc, u.username limit 20`);
+    return send(res, 200, { groups, users: users.map((u) => ({ ...publicUser(u), points: u.points })) });
+  }
+  if (a === 'groups') {
+    needUser(me);
+    const mine = await myGroupId(me);
+    if (isGet && b === 'mine') return send(res, 200, mine ? await groupView(mine) : null);
+    if (isPost && !b) { // crear grupo
+      if (mine) fail(409, 'Ya estás en un grupo');
+      const body = await readJSON(req), name = clean(body.name, 24);
+      if (name.length < 2) fail(400, 'Nombre de grupo: 2-24 caracteres');
+      const color = /^#[0-9a-f]{6}$/i.test(body.color) ? body.color.toLowerCase() : '#2f7d4f';
+      let g;
+      try { g = await q1('insert into poyo.groups (name, color, code, created_by) values ($1, $2, $3, $4) returning id', [name, color, newCode(), me.id]); }
+      catch (e) { if (e.code === '23505') fail(409, 'Ese nombre de grupo ya existe'); throw e; }
+      await q('insert into poyo.group_members (group_id, user_id) values ($1, $2)', [g.id, me.id]);
+      return send(res, 201, await groupView(g.id));
+    }
+    if (isPost && b === 'join') { // unirse con el código
+      if (mine) fail(409, 'Ya estás en un grupo');
+      const g = await q1('select id from poyo.groups where code = $1', [clean((await readJSON(req)).code, 6).toUpperCase()]) || fail(404, 'Código de grupo no válido');
+      if ((await q1('select count(*)::int as n from poyo.group_members where group_id = $1', [g.id])).n >= GAME.groupMax) fail(409, 'El grupo está lleno (máx. 5)');
+      await q('insert into poyo.group_members (group_id, user_id) values ($1, $2) on conflict do nothing', [g.id, me.id]);
+      return send(res, 200, await groupView(g.id));
+    }
+    if (isPost && b === 'leave') {
+      if (!mine) fail(404, 'No estás en ningún grupo');
+      await q('delete from poyo.group_members where user_id = $1', [me.id]);
+      await q('delete from poyo.groups g where g.id = $1 and not exists (select 1 from poyo.group_members m where m.group_id = g.id)', [mine]);
+      return send(res, 200, {});
+    }
+  }
+  if (isPost && a === 'places' && c === 'checkin') {
+    needUser(me);
+    const groupId = await myGroupId(me) || fail(403, 'Únete a un grupo para hacer check-in');
+    const body = await readJSON(req);
+    const lat = Number(body.lat), lng = Number(body.lng), acc = Number(body.accuracy) || 0;
+    if (!(Math.abs(lat) <= 90 && Math.abs(lng) <= 180) || body.lat == null) fail(400, 'Ubicación no válida');
+    if (acc > GAME.accuracy) fail(400, 'Ubicación poco precisa: acércate a cielo abierto y reintenta');
+    let pl = await q1('select id, lat, lng, type from poyo.places where id = $1', [b]);
+    if (!pl) {
+      const v = b.startsWith('osm-') && validPlace({ ...body.place, id: b }) || fail(404, 'No existe');
+      await q('insert into poyo.places (id, lat, lng, name, type) values ($1, $2, $3, $4, $5) on conflict do nothing', [v.id, v.lat, v.lng, v.name, v.type]);
+      pl = v;
+    }
+    if (!['bench', 'picnic'].includes(pl.type)) fail(400, 'Solo se pueden reclamar bancos y mesas de pícnic');
+    if (meters([lat, lng], [pl.lat, pl.lng]) > GAME.reach) fail(400, 'Estás demasiado lejos del banco (máx. 40 m)');
+    const last = await q1('select lat, lng, extract(epoch from now() - at) as secs from poyo.checkins where user_id = $1 order by at desc limit 1', [me.id]);
+    if (last && meters([lat, lng], [last.lat, last.lng]) / 1000 / Math.max(last.secs / 3600, 1 / 3600) > GAME.maxSpeedKmh) fail(400, 'Ese desplazamiento no es posible');
+    if ((await q1(`select count(*)::int as n from poyo.checkins where user_id = $1 and day = (now() at time zone 'Europe/Madrid')::date`, [me.id])).n >= GAME.maxPlacesDay) fail(429, 'Máximo 10 bancos distintos al día');
+    const meet = (await q1(`select count(distinct user_id)::int as n from poyo.checkins where place_id = $1 and group_id = $2 and user_id <> $3 and at > now() - interval '1 hour'`, [b, groupId, me.id])).n;
+    const points = 1 + Math.min(3, meet); // visita + 1 por cada compañero que estuvo en la última hora
+    try { await q('insert into poyo.checkins (place_id, user_id, group_id, lat, lng, accuracy, points) values ($1, $2, $3, $4, $5, $6, $7)', [b, me.id, groupId, lat, lng, acc, points]); }
+    catch (e) { if (e.code === '23505') fail(409, 'Ya hiciste check-in aquí hoy'); throw e; }
+    return send(res, 201, { points, meet, control: await updateControl(b), place: await placeStats(b) });
   }
 
   // --- usuarios y perfiles ---
