@@ -3,6 +3,18 @@
 const LANGS = { es: 'Español', en: 'English' };
 const DICT = { en: {
   // tipos y filtros
+  '🏴 ¡Prueba el modo juego!': '🏴 Try game mode!',
+  '🏴 Mi grupo': '🏴 My group',
+  'Cómo se juega': 'How to play',
+  'Crea un grupo (de 2 a 5 personas) y comparte el código para que tus amigos se unan.': 'Create a group (2 to 5 people) and share the code so your friends can join.',
+  'Ve a un banco o mesa de pícnic y pulsa «Hacer check-in» en su ficha: tienes que estar a menos de 40 m.': 'Go to a bench or picnic table and tap "Check in" on its page: you must be within 40 m.',
+  'Cada check-in da 1 punto a tu grupo, y +1 por cada compañero que estuviera allí en la última hora (hasta +3). Una vez al día por banco y 10 bancos al día como máximo.': 'Each check-in gives your group 1 point, plus 1 for each teammate who was there in the last hour (up to +3). Once a day per bench and 10 benches a day at most.',
+  'Manda en un banco el grupo con más puntos de los últimos 14 días (cada punto vale la mitad a los 5 días). Para quitarle una base a otro grupo hay que superarle en un 20 %.': 'The group with the most points in the last 14 days rules a bench (each point is worth half after 5 days). To take a base from another group you must beat it by 20%.',
+  '¿Un banco que no sale en el mapa? Créalo marcando «Reclamar con mi ubicación», con foto y nota: +5 puntos. Otra persona debe confirmar que existe.': 'A bench that is not on the map? Create it ticking "Claim with my location", with a photo and rating: +5 points. Someone else must confirm it exists.',
+  'Los bancos con base llevan un aro del color del grupo. Si ves ⚠️, alguien está a punto de quitaros una base.': 'Benches with a base have a ring in the group color. If you see ⚠️, someone is about to take a base from you.',
+  'Gana insignias en tu perfil: madrugador, rey del atardecer, fiel y explorador.': 'Earn badges on your profile: early bird, sunset king, loyal and explorer.',
+  'tramo máximo {a} m (tu límite: {b} m)': 'longest stretch {a} m (your limit: {b} m)',
+  'No hay más sitios conocidos para partir esos tramos.': 'There are no more known places to break up those stretches.',
   'Sin verificar': 'Unverified',
   'Oculto': 'Hidden',
   '✅ Confirmar que existe (estando ahí)': '✅ Confirm it exists (while there)',

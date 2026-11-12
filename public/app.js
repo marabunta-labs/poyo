@@ -416,10 +416,10 @@ function setMe(u) {
   $('nav-me').replaceChildren(...(u ? [avatarEl(u, 22), u.username] : [t('👤 Entrar')]));
   refreshGameAlert();
 }
-async function refreshGameAlert() { // «🏴 Juego ⚠️2»: bases de mi grupo en peligro
-  let n = 0;
-  if (me && !me.needsProfile) { try { n = (await api('GET', '/groups/mine'))?.atRisk || 0; } catch {} }
-  $('nav-game').textContent = t('🏴 Juego') + (n ? ` ⚠️${n}` : '');
+async function refreshGameAlert() { // botón flotante: «¡Prueba el modo juego!» o, con grupo, «Mi grupo ⚠️2» (bases en peligro)
+  let g = null;
+  if (me && !me.needsProfile) { try { g = await api('GET', '/groups/mine'); } catch {} }
+  $('gamebtn').textContent = g ? t('🏴 Mi grupo') + (g.atRisk ? ` ⚠️${g.atRisk}` : '') : t('🏴 ¡Prueba el modo juego!');
 }
 async function requireLogin(msg) { if (!me) { openAccount(msg); return false; } return true; }
 $('nav-me').onclick = () => (me ? openProfile(me.username) : openAccount());
@@ -824,20 +824,29 @@ map.on('click', (e) => {
 });
 
 // ---------- juego de bases: mi grupo y rankings ----------
-const openGame = async () => { if (await requireLogin(t('Inicia sesión para jugar'))) visit('game', loadGame); };
+const openGame = () => visit('game', loadGame);
 let rankZone = false; // ranking de toda España o solo de la zona visible del mapa
 async function loadGame() {
   const c = content(), vid = viewId;
   let g, rk;
   const bb = map.getBounds(), zone = rankZone ? `?s=${bb.getSouth()}&w=${bb.getWest()}&n=${bb.getNorth()}&e=${bb.getEast()}` : '';
-  try { [g, rk] = await Promise.all([api('GET', '/groups/mine'), api('GET', '/game/ranking' + zone)]); }
+  try { [g, rk] = await Promise.all([me && !me.needsProfile ? api('GET', '/groups/mine') : null, api('GET', '/game/ranking' + zone)]); }
   catch (x) { c.append(el('div', { className: 'err', textContent: x.message })); return; }
   if (stale(vid)) return;
   const dot = (col) => el('span', { className: 'dot', style: `background:${col}` });
   const err = el('div', { className: 'err' });
   const post = (path, body) => async (ev) => { ev.preventDefault(); err.textContent = ''; try { await api('POST', path, body()); loadGame(); } catch (x) { err.textContent = x.message; } };
-  c.append(el('h2', { textContent: t('🏴 Juego de bases') }), el('div', { className: 'sub', textContent: t('Frecuenta los bancos con tu grupo y conviértelos en vuestra base.') }));
-  if (g) {
+  c.append(el('h2', { textContent: t('🏴 Juego de bases') }), el('div', { className: 'sub', textContent: t('Frecuenta los bancos con tu grupo y conviértelos en vuestra base.') }),
+    Object.assign(el('details', { className: 'howto' }, el('summary', { textContent: t('Cómo se juega') }),
+      el('ol', {}, ...['Crea un grupo (de 2 a 5 personas) y comparte el código para que tus amigos se unan.',
+        'Ve a un banco o mesa de pícnic y pulsa «Hacer check-in» en su ficha: tienes que estar a menos de 40 m.',
+        'Cada check-in da 1 punto a tu grupo, y +1 por cada compañero que estuviera allí en la última hora (hasta +3). Una vez al día por banco y 10 bancos al día como máximo.',
+        'Manda en un banco el grupo con más puntos de los últimos 14 días (cada punto vale la mitad a los 5 días). Para quitarle una base a otro grupo hay que superarle en un 20 %.',
+        '¿Un banco que no sale en el mapa? Créalo marcando «Reclamar con mi ubicación», con foto y nota: +5 puntos. Otra persona debe confirmar que existe.',
+        'Los bancos con base llevan un aro del color del grupo. Si ves ⚠️, alguien está a punto de quitaros una base.',
+        'Gana insignias en tu perfil: madrugador, rey del atardecer, fiel y explorador.'].map((x) => el('li', { textContent: t(x) })))), { open: !g }));
+  if (!me || me.needsProfile) c.append(el('button', { className: 'submit', style: 'width:100%;margin:10px 0', textContent: t('Inicia sesión para jugar'), onclick: () => openAuth(t('Inicia sesión para jugar')) }));
+  else if (g) {
     c.append(el('h3', {}, dot(g.color), ' ' + g.name, el('small', { className: 'muted', textContent: ` · ${g.score} pts` })),
       el('div', { textContent: t('Código para invitar: {code}', { code: g.code }) }),
       el('h4', { textContent: t('Miembros') }), ...g.members.map(userRow),
@@ -847,7 +856,7 @@ async function loadGame() {
       el('button', { className: 'btn danger', style: 'margin:10px 0', textContent: t('Salir del grupo'), onclick: async () => {
         if (confirm(t('¿Salir del grupo?'))) { await api('POST', '/groups/leave'); loadGame(); }
       } }));
-  } else {
+  } else if (me && !me.needsProfile) {
     const name = el('input', { placeholder: t('Nombre del grupo'), maxLength: 24, required: true }), color = el('input', { type: 'color', value: '#2f7d4f' });
     const code = el('input', { placeholder: t('Código'), maxLength: 6, required: true, style: 'text-transform:uppercase' });
     c.append(el('h3', { textContent: t('Crear un grupo') }),
@@ -866,10 +875,10 @@ async function loadGame() {
     ...rk.users.map((u, i) => el('button', { className: 'plain urow', onclick: () => openProfile(u.username) }, `${i + 1}. `, el('b', { textContent: '@' + u.username }), u.isSeed ? demoBadge() : null,
       el('small', { className: 'muted', textContent: ' · ' + t('{n} pts', { n: u.points }) }))));
 }
-$('nav-game').onclick = openGame;
+$('gamebtn').onclick = openGame;
 
 // ---------- ruta con paradas: sin tramos largos sin banco (o sin fuente) ----------
-const route = { from: null, to: null, kinds: ['bench'], gap: 250, picking: null, result: null, layer: L.layerGroup().addTo(map) };
+const route = { from: null, to: null, kinds: ['bench'], gaps: { bench: 250, fountain: 250 }, picking: null, result: null, layer: L.layerGroup().addTo(map) };
 const openRoute = () => visit('route', renderRoute);
 const setPicking = (v) => { route.picking = v; $('map').classList.toggle('picking', !!v); };
 const pickRoutePoint = (lat, lng, label = '') => { route[route.picking] = { lat, lng, label }; setPicking(null); route.result = null; drawRoute(); openRoute(); };
@@ -902,32 +911,35 @@ function renderRoute() {
       } }),
       el('button', { type: 'button', className: 'btn' + (on ? ' on' : ''), textContent: on ? t('Toca el mapa…') : t('Elegir en el mapa'), onclick: () => { setPicking(on ? null : k); renderRoute(); } }));
   };
-  const kinds = el('div', { className: 'rrow' }, ...[['bench', t('🪑 Bancos')], ['fountain', t('💧 Fuentes')]].map(([k, label]) => el('label', { className: 'rchk' },
-    Object.assign(el('input', { type: 'checkbox', checked: route.kinds.includes(k) }), { onchange: (ev) => {
-      route.kinds = ev.target.checked ? [...route.kinds, k] : route.kinds.filter((x) => x !== k); route.result = null; drawRoute(); renderRoute();
-    } }), label)));
-  const gap = el('select', {}, ...[100, 150, 250, 400, 600].map((m) => el('option', { value: m, textContent: t('Máx. {m} m entre paradas', { m }) })));
-  gap.value = route.gap; gap.onchange = () => { route.gap = Number(gap.value); route.result = null; drawRoute(); renderRoute(); };
+  const KIND_LABEL = { bench: t('🪑 Bancos'), fountain: t('💧 Fuentes') };
+  const kinds = el('div', {}, ...Object.keys(KIND_LABEL).map((k) => { // cada tipo con su propio tramo máximo (p. ej. bancos cada 100 m y fuentes cada 200 m)
+    const on = route.kinds.includes(k);
+    const gap = el('select', {}, ...[100, 150, 250, 400, 600].map((m) => el('option', { value: m, textContent: t('Máx. {m} m entre paradas', { m }) })));
+    gap.value = route.gaps[k]; gap.onchange = () => { route.gaps[k] = Number(gap.value); route.result = null; drawRoute(); renderRoute(); };
+    return el('div', { className: 'rrow' }, el('label', { className: 'rchk' },
+      Object.assign(el('input', { type: 'checkbox', checked: on }), { onchange: (ev) => {
+        route.kinds = ev.target.checked ? [...route.kinds, k] : route.kinds.filter((x) => x !== k); route.result = null; drawRoute(); renderRoute();
+      } }), KIND_LABEL[k]), on ? gap : null);
+  }));
   const err = el('div', { className: 'err' }), out = el('div', { className: 'rsum' });
   const go = el('button', { className: 'submit', textContent: t('Calcular ruta'), onclick: async () => {
     err.textContent = '';
     if (!route.from || !route.to) return (err.textContent = t('Elige origen y destino'));
     go.disabled = true; go.textContent = t('Calculando…');
     try {
-      route.result = await api('GET', `/route?from=${route.from.lat},${route.from.lng}&to=${route.to.lat},${route.to.lng}&kinds=${route.kinds.join(',')}&gap=${route.gap}`);
+      route.result = await api('GET', `/route?from=${route.from.lat},${route.from.lng}&to=${route.to.lat},${route.to.lng}&kinds=${route.kinds.join(',')}&gaps=${route.kinds.map((k) => `${k}:${route.gaps[k]}`).join(',')}`);
       drawRoute(); map.fitBounds(L.polyline(route.result.geometry).getBounds(), { padding: [40, 40] }); renderRoute();
     } catch (x) { err.textContent = x.message; go.disabled = false; go.textContent = t('Calcular ruta'); }
   } });
   c.append(el('h2', { textContent: t('Ruta con paradas') }), el('div', { className: 'sub', textContent: t('Una ruta a pie sin tramos largos sin un banco donde sentarte (o una fuente donde beber).') }),
-    where('from', t('Origen')), where('to', t('Destino')), el('div', { className: 'muted' }, t('Paradas en la ruta (ninguna = ruta normal)')), kinds,
-    route.kinds.length ? el('div', { className: 'rrow' }, gap) : null, go, err, out);
+    where('from', t('Origen')), where('to', t('Destino')), el('div', { className: 'muted' }, t('Paradas en la ruta (ninguna = ruta normal)')), kinds, go, err, out);
   const r = route.result;
   if (r) {
     out.append(el('div', { textContent: route.kinds.length ? t('{km} km · {min} min a pie · {n} paradas en la ruta', { km: km(r.distance), min: Math.round(r.duration / 60), n: r.stops.length })
       : t('{km} km · {min} min a pie', { km: km(r.distance), min: Math.round(r.duration / 60) }) }));
-    if (route.kinds.length) out.append(
-      el('div', { className: r.ok ? 'okk' : 'warn', textContent: r.ok ? t('✅ Ningún tramo supera {m} m', { m: route.gap }) : t('⚠️ Tramos de más de {m} m sin dónde parar: {n} (con los sitios conocidos)', { n: r.gaps.length, m: route.gap }) }),
-      el('div', { className: 'muted', textContent: t('Mayor tramo sin parada: {m} m', { m: r.maxGap }) }));
+    Object.keys(r.limits || {}).forEach((k) => out.append(el('div', { className: r.maxGaps[k] <= r.limits[k] ? 'okk' : 'warn',
+      textContent: `${r.maxGaps[k] <= r.limits[k] ? '✅' : '⚠️'} ${KIND_LABEL[k]}: ${t('tramo máximo {a} m (tu límite: {b} m)', { a: r.maxGaps[k], b: r.limits[k] })}` })));
+    if (route.kinds.length && !r.ok) out.append(el('div', { className: 'muted', textContent: t('No hay más sitios conocidos para partir esos tramos.') }));
     out.append(el('button', { className: 'btn', style: 'margin-top:8px', textContent: t('Quitar ruta'), onclick: () => { route.result = null; route.from = route.to = null; drawRoute(); renderRoute(); } }));
   }
 }

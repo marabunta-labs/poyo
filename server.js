@@ -264,9 +264,11 @@ async function routeApi(url) {
   const pt = (k) => { const [la, ln] = (url.searchParams.get(k) || '').split(',').map(Number); return Number.isFinite(la) && Number.isFinite(ln) && Math.abs(la) <= 90 && Math.abs(ln) <= 180 ? [la, ln] : fail(400, 'Punto no válido'); };
   const from = pt('from'), to = pt('to');
   const kinds = (url.searchParams.get('kinds') ?? 'bench').split(',').filter((k) => k === 'bench' || k === 'fountain'); // vacío: ruta normal
-  const limit = Math.min(1000, Math.max(80, Math.round(Number(url.searchParams.get('gap'))) || 250));
+  // tramo máximo por tipo: gaps=bench:100,fountain:200 (gap=N vale para todos; por defecto 250 m)
+  const clamp = (x) => Math.min(1000, Math.max(80, Math.round(x) || 250));
+  const limitOf = (k) => clamp(Number(new RegExp(`(?:^|,)${k}:(\\d+)`).exec(url.searchParams.get('gaps') || '')?.[1] ?? url.searchParams.get('gap')));
   if (meters(from, to) > 15000) fail(400, 'Ruta demasiado larga (máx. 15 km)');
-  if (!kinds.length) { const r = await footRoute([from, to]); return { distance: Math.round(r.distance), duration: Math.round(r.duration), geometry: r.coords, stops: [], maxGap: 0, maxGaps: {}, ok: true, gaps: [] }; }
+  if (!kinds.length) { const r = await footRoute([from, to]); return { distance: Math.round(r.distance), duration: Math.round(r.duration), geometry: r.coords, stops: [], maxGap: 0, maxGaps: {}, limits: {}, ok: true, gaps: [] }; }
   const pad = 0.003; // ~330 m a cada lado: hasta donde nos podemos desviar
   const [s, w, n, e] = [Math.min(from[0], to[0]) - pad, Math.min(from[1], to[1]) - pad, Math.max(from[0], to[0]) + pad, Math.max(from[1], to[1]) + pad];
   const GROUPS = { bench: ['bench', 'picnic'], fountain: ['fountain'] }; // las mesas de pícnic también sirven para sentarse
@@ -278,7 +280,8 @@ async function routeApi(url) {
   }
   for (const p of await q('select id, lat, lng, name, type from poyo.places where lat between $1 and $3 and lng between $2 and $4 and type = any($5) and status <> \'hidden\'', [s, w, n, e, wanted])) sites.set(p.id, p);
   const all = [...sites.values()];
-  return planRoute({ from, to, route: footRoute, constraints: kinds.map((k) => ({ id: k, limit, sites: all.filter((x) => GROUPS[k].includes(x.type)) })) });
+  const limits = Object.fromEntries(kinds.map((k) => [k, limitOf(k)]));
+  return { ...(await planRoute({ from, to, route: footRoute, constraints: kinds.map((k) => ({ id: k, limit: limits[k], sites: all.filter((x) => GROUPS[k].includes(x.type)) })) })), limits };
 }
 
 // Buscador de lugares (Nominatim). Su política: máx. 1 petición/s, sin autocompletado → cacheamos y espaciamos.
