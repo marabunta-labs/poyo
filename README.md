@@ -28,8 +28,7 @@ Evita CARTO: desde 2025 exige clave y pone una marca de agua.
 
 ## Datos y cuentas (Supabase)
 Poyo no guarda nada en disco: los datos viven en el esquema `poyo` del proyecto de Supabase compartido por las apps de Marabunta Labs (repo privado `marabunta-db`).
-El esquema completo está en [`supabase/schema.sql`](supabase/schema.sql): para montar Poyo con tu propio proyecto de Supabase, ejecútalo en el SQL Editor, pon la contraseña de `poyo_app` (`alter role poyo_app with password '…'`) y úsala en `DATABASE_URL`. Si cambias el esquema, actualiza también `marabunta-db/sql/50_poyo.sql`.
-- **Cuentas:** Supabase Auth (email + contraseña, o Google). Es la **cuenta común de Marabunta Labs**: quien ya la tenga en otra app entra con la misma. Poyo solo guarda un perfil (`@usuario`, bio, avatar).
+El esquema completo está en [`supabase/schema.sql`](supabase/schema.sql): para montar Poyo con tu propio proyecto de Supabase, ejecútalo en el SQL Editor, pon la contraseña de `poyo_app` (`alter role poyo_app with password '…'`) y úsala en `DATABASE_URL`.- **Cuentas:** Supabase Auth (email + contraseña, o Google). Es la **cuenta común de Marabunta Labs**: quien ya la tenga en otra app entra con la misma. Poyo solo guarda un perfil (`@usuario`, bio, avatar).
 - **Datos:** `poyo.profiles / places / reviews / friendships / reports`. El servidor entra con un rol (`poyo_app`) que solo ve ese esquema.
 - **Fotos:** el navegador las reduce (≤1080 px, ~100 KB) y las sube a Supabase Storage (`poyo-photos`, carpeta `<uid>/`). Borrarlas de Storage lo hace `scripts/purge-photos.js` (el servidor no tiene permiso).
 - Los volcados de OSM (`DATA_DIR/osm/`) y la caché de Overpass siguen en disco.
