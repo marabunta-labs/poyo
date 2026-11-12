@@ -8,6 +8,7 @@ const path = require('path');
 const crypto = require('crypto');
 const zlib = require('zlib');
 const { Pool } = require('pg');
+const { planRoute, meters } = require('./routes');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC = path.join(__dirname, 'public');
@@ -155,14 +156,14 @@ try {
   }
 } catch {}
 if (localCount) console.log(`OSM local: ${localCount} sitios`);
-function localSites(s, w, n, e) {
+function localSites(s, w, n, e, max = 1500) {
   const out = [];
   for (let y = Math.floor(s / CELL); y <= Math.floor(n / CELL); y++) {
     for (let x = Math.floor(w / CELL); x <= Math.floor(e / CELL); x++) {
       for (const it of grid.get(y + ',' + x) || []) if (it.lat >= s && it.lat <= n && it.lng >= w && it.lng <= e) out.push(it);
     }
   }
-  return out.slice(0, 1500);
+  return out.slice(0, max);
 }
 const OVERPASS = [
   'https://overpass-api.de/api/interpreter',
@@ -228,6 +229,36 @@ async function osm(url) {
   return elements;
 }
 
+// Ruta a pie con paradas (ver routes.js): servicio de rutas a pie de OSM (FOSSGIS), gratis y sin clave.
+async function footRoute(points) {
+  const coords = points.map(([la, ln]) => ln + ',' + la).join(';');
+  let r;
+  try { r = await fetch(`https://routing.openstreetmap.de/routed-foot/route/v1/foot/${coords}?overview=full&geometries=geojson`, { headers: OSM_HEADERS, signal: AbortSignal.timeout(15000) }); }
+  catch { fail(502, 'El servicio de rutas no responde'); }
+  const d = r.ok ? await r.json().catch(() => null) : null;
+  if (!d) fail(502, 'El servicio de rutas no responde');
+  if (d.code !== 'Ok' || !d.routes?.[0]) fail(404, 'No hay ruta a pie entre esos puntos');
+  const x = d.routes[0];
+  return { coords: x.geometry.coordinates.map(([ln, la]) => [la, ln]), distance: x.distance, duration: x.duration };
+}
+async function routeApi(url) {
+  const pt = (k) => { const [la, ln] = (url.searchParams.get(k) || '').split(',').map(Number); return Number.isFinite(la) && Number.isFinite(ln) && Math.abs(la) <= 90 && Math.abs(ln) <= 180 ? [la, ln] : fail(400, 'Punto no válido'); };
+  const from = pt('from'), to = pt('to');
+  const kind = url.searchParams.get('kind') === 'fountain' ? 'fountain' : 'bench';
+  const limit = Math.min(1000, Math.max(80, Math.round(Number(url.searchParams.get('gap'))) || 250));
+  if (meters(from, to) > 15000) fail(400, 'Ruta demasiado larga (máx. 15 km)');
+  const pad = 0.003; // ~330 m a cada lado: hasta donde nos podemos desviar
+  const [s, w, n, e] = [Math.min(from[0], to[0]) - pad, Math.min(from[1], to[1]) - pad, Math.max(from[0], to[0]) + pad, Math.max(from[1], to[1]) + pad];
+  const wanted = kind === 'fountain' ? ['fountain'] : ['bench', 'picnic'];
+  const sites = new Map();
+  for (const it of localSites(s, w, n, e, 20000)) {
+    const type = it.tags.amenity === 'drinking_water' ? 'fountain' : it.tags.leisure === 'picnic_table' ? 'picnic' : it.tags.amenity === 'bench' ? 'bench' : null;
+    if (wanted.includes(type)) sites.set(it.id, { id: it.id, lat: it.lat, lng: it.lng, name: it.tags.name || '', type });
+  }
+  for (const p of await q('select id, lat, lng, name, type from poyo.places where lat between $1 and $3 and lng between $2 and $4 and type = any($5)', [s, w, n, e, wanted])) sites.set(p.id, p);
+  return planRoute({ from, to, limit, sites: [...sites.values()], route: footRoute });
+}
+
 // Buscador de lugares (Nominatim). Su política: máx. 1 petición/s, sin autocompletado → cacheamos y espaciamos.
 const geoCache = new Map();
 let lastGeo = 0;
@@ -281,6 +312,7 @@ async function api(req, res, url) {
   if (isGet && a === 'config') return send(res, 200, { supabaseUrl: SUPABASE_URL, supabaseAnonKey: SUPABASE_ANON_KEY, bucket: BUCKET, criteria: CRITERIA });
   if (isGet && a === 'osm') return send(res, 200, await osm(url));
   if (isGet && a === 'geocode') return send(res, 200, await geocode(url));
+  if (isGet && a === 'route') { if (limited(ip)) fail(429, 'Demasiadas peticiones, espera un minuto'); return send(res, 200, await routeApi(url)); }
 
   const me = await currentUser(req);
 

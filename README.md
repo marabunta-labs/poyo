@@ -19,6 +19,9 @@ node scripts/import-osm.js <url|fichero.pbf> --name francia   # otra región (ht
 Genera `DATA_DIR/osm/<nombre>.json`; reinicia el servidor para cargarlo. Repítelo de vez en cuando (p. ej. cada mes) para refrescar.
 En Docker: `docker exec <contenedor> node scripts/import-osm.js`. Las zonas sin volcado usan Overpass como respaldo (con caché en disco).
 
+## Rutas con paradas
+Botón **🚶 Ruta** (o «Ruta hasta aquí» en la ficha de un sitio): eliges origen y destino, si quieres parar en **bancos** (y mesas de pícnic) o en **fuentes**, y la distancia máxima entre paradas (100-600 m). Poyo pide la ruta a pie al servicio de OSM (FOSSGIS, gratis y sin clave) y, mientras algún tramo supere ese máximo, la rehace pasando por el banco/fuente más lejano que alcance sin desviarse más de 150 m (`routes.js`). Marca en rojo los tramos que no se pueden arreglar con los sitios conocidos (volcado de OSM + los de la comunidad). Máx. 15 km en línea recta. Pruebas: `node --test test/route.test.js`.
+
 ## Idiomas
 Español e inglés (selector en la cabecera; por defecto, el del navegador). Las claves son los textos en español y el diccionario inglés está en `public/i18n.js`; para añadir un idioma, una entrada en `LANGS` y su diccionario en `DICT`. Lo que escribe la gente (reseñas, bios) no se traduce.
 

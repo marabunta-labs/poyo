@@ -492,6 +492,10 @@ function renderPlace(p) {
     };
     c.append(form);
   }
+  c.append(el('button', { className: 'btn', style: 'margin:10px 0', textContent: t('🚶 Ruta hasta aquí'), onclick: () => {
+    route.to = { lat: p.lat, lng: p.lng, label: p.name || TYPES[p.type] }; if (!route.from && userPos) route.from = { ...userPos, label: t('Mi ubicación') };
+    route.result = null; drawRoute(); openRoute();
+  } }));
   if (p.canDelete) c.append(el('button', { className: 'btn danger', style: 'margin:10px 0', textContent: t('Borrar este sitio'), onclick: async () => {
     if (!confirm(t('¿Borrar el sitio y todas sus reseñas?'))) return;
     try { await api('DELETE', '/places/' + p.id); markers.get(p.id)?.remove(); markers.delete(p.id); places.delete(p.id); $('panel').hidden = true; }
@@ -701,6 +705,68 @@ map.on('click', (e) => {
   };
   c.append(form);
 });
+
+// ---------- ruta con paradas: sin tramos largos sin banco (o sin fuente) ----------
+const route = { from: null, to: null, kind: 'bench', gap: 250, picking: null, result: null, layer: L.layerGroup().addTo(map) };
+const openRoute = () => visit('route', renderRoute);
+const setPicking = (v) => { route.picking = v; $('map').classList.toggle('picking', !!v); };
+map.on('click', (e) => {
+  if (!route.picking) return;
+  route[route.picking] = { lat: e.latlng.lat, lng: e.latlng.lng, label: '' }; setPicking(null); route.result = null; drawRoute(); openRoute();
+});
+const endIcon = (txt) => L.divIcon({ className: '', html: `<div class="rend">${txt}</div>`, iconSize: [24, 24], iconAnchor: [12, 12] });
+const km = (m) => (m / 1000).toFixed(1);
+function drawRoute() { // origen, destino y, si ya está calculada, la ruta con sus paradas y los tramos largos en rojo
+  route.layer.clearLayers();
+  if (route.from) L.marker([route.from.lat, route.from.lng], { icon: endIcon('A') }).addTo(route.layer);
+  if (route.to) L.marker([route.to.lat, route.to.lng], { icon: endIcon('B') }).addTo(route.layer);
+  const r = route.result; if (!r) return;
+  L.polyline(r.geometry, { color: '#2f7d4f', weight: 5, opacity: 0.85 }).addTo(route.layer);
+  const cum = [0]; r.geometry.forEach((p, i) => { if (i) cum.push(cum[i - 1] + L.latLng(r.geometry[i - 1]).distanceTo(L.latLng(p))); });
+  r.gaps.forEach((g) => L.polyline(r.geometry.filter((_, i) => cum[i] >= g.from && cum[i] <= g.to), { color: '#d93025', weight: 6, dashArray: '2 10', lineCap: 'round' }).addTo(route.layer));
+  r.stops.forEach((s) => {
+    const m = L.marker([s.lat, s.lng], { icon: L.divIcon({ className: '', html: `<div class="rstop">${EMOJI[s.type] || EMOJI.bench}</div>`, iconSize: [20, 20], iconAnchor: [10, 10] }) }).addTo(route.layer);
+    m.bindTooltip(`${s.name || TYPES[s.type]} · ${away(s.at)}`);
+    m.on('click', () => openPlace(s.id));
+  });
+}
+function renderRoute() {
+  const c = content();
+  const where = (k, title) => {
+    const p = route[k], on = route.picking === k;
+    return el('div', { className: 'rrow' }, el('b', { textContent: title }),
+      el('span', { textContent: p ? (p.label || `${p.lat.toFixed(4)}, ${p.lng.toFixed(4)}`) : t('Sin elegir') }),
+      el('button', { type: 'button', className: 'btn', textContent: t('Mi ubicación'), onclick: () => {
+        const go = (pos) => { route[k] = { ...pos, label: t('Mi ubicación') }; route.result = null; drawRoute(); renderRoute(); };
+        if (userPos) go(userPos); else navigator.geolocation?.getCurrentPosition((pp) => { userPos = { lat: pp.coords.latitude, lng: pp.coords.longitude }; go(userPos); }, () => alert(t('No se pudo obtener tu ubicación')));
+      } }),
+      el('button', { type: 'button', className: 'btn' + (on ? ' on' : ''), textContent: on ? t('Toca el mapa…') : t('Elegir en el mapa'), onclick: () => { setPicking(on ? null : k); renderRoute(); } }));
+  };
+  const kind = el('select', {}, el('option', { value: 'bench', textContent: t('🪑 Bancos') }), el('option', { value: 'fountain', textContent: t('💧 Fuentes') }));
+  kind.value = route.kind; kind.onchange = () => { route.kind = kind.value; route.result = null; drawRoute(); renderRoute(); };
+  const gap = el('select', {}, ...[100, 150, 250, 400, 600].map((m) => el('option', { value: m, textContent: t('Máx. {m} m entre paradas', { m }) })));
+  gap.value = route.gap; gap.onchange = () => { route.gap = Number(gap.value); route.result = null; drawRoute(); renderRoute(); };
+  const err = el('div', { className: 'err' }), out = el('div', { className: 'rsum' });
+  const go = el('button', { className: 'submit', textContent: t('Calcular ruta'), onclick: async () => {
+    err.textContent = '';
+    if (!route.from || !route.to) return (err.textContent = t('Elige origen y destino'));
+    go.disabled = true; go.textContent = t('Calculando…');
+    try {
+      route.result = await api('GET', `/route?from=${route.from.lat},${route.from.lng}&to=${route.to.lat},${route.to.lng}&kind=${route.kind}&gap=${route.gap}`);
+      drawRoute(); map.fitBounds(L.polyline(route.result.geometry).getBounds(), { padding: [40, 40] }); renderRoute();
+    } catch (x) { err.textContent = x.message; go.disabled = false; go.textContent = t('Calcular ruta'); }
+  } });
+  c.append(el('h2', { textContent: t('Ruta con paradas') }), el('div', { className: 'sub', textContent: t('Una ruta a pie sin tramos largos sin un banco donde sentarte (o una fuente donde beber).') }),
+    where('from', t('Origen')), where('to', t('Destino')), el('div', { className: 'rrow' }, kind, gap), go, err, out);
+  const r = route.result;
+  if (r) {
+    out.append(el('div', { textContent: t('{km} km · {min} min a pie · {n} paradas en la ruta', { km: km(r.distance), min: Math.round(r.duration / 60), n: r.stops.length }) }),
+      el('div', { className: r.ok ? 'okk' : 'warn', textContent: r.ok ? t('✅ Ningún tramo supera {m} m', { m: route.gap }) : t('⚠️ Tramos de más de {m} m sin dónde parar: {n} (con los sitios conocidos)', { n: r.gaps.length, m: route.gap }) }),
+      el('div', { className: 'muted', textContent: t('Mayor tramo sin parada: {m} m', { m: r.maxGap }) }));
+    out.append(el('button', { className: 'btn', style: 'margin-top:8px', textContent: t('Quitar ruta'), onclick: () => { route.result = null; route.from = route.to = null; drawRoute(); renderRoute(); } }));
+  }
+}
+$('routebtn').onclick = openRoute;
 
 // ---------- ubicación e inicio ----------
 function locate(first) {

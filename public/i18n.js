@@ -3,6 +3,14 @@
 const LANGS = { es: 'Español', en: 'English' };
 const DICT = { en: {
   // tipos y filtros
+  '🚶 Ruta': '🚶 Route', 'Ruta con paradas': 'Route with rest stops', 'Una ruta a pie sin tramos largos sin un banco donde sentarte (o una fuente donde beber).': 'A walking route with no long stretches without a bench to sit on (or a fountain to drink from).',
+  'Origen': 'From', 'Destino': 'To', 'Sin elegir': 'Not set', 'Elegir en el mapa': 'Pick on the map', 'Toca el mapa…': 'Tap the map…', 'No se pudo obtener tu ubicación': 'Could not get your location',
+  '🪑 Bancos': '🪑 Benches', 'Máx. {m} m entre paradas': 'Max {m} m between stops', 'Calcular ruta': 'Get route', 'Calculando…': 'Working…', 'Elige origen y destino': 'Pick a start and an end',
+  '{km} km · {min} min a pie · {n} paradas en la ruta': '{km} km · {min} min on foot · {n} stops on the route', '✅ Ningún tramo supera {m} m': '✅ No stretch is longer than {m} m',
+  '⚠️ Tramos de más de {m} m sin dónde parar: {n} (con los sitios conocidos)': '⚠️ Stretches longer than {m} m with nowhere to stop: {n} (among the known places)',
+  'Mayor tramo sin parada: {m} m': 'Longest stretch without a stop: {m} m', 'Quitar ruta': 'Clear route', '🚶 Ruta hasta aquí': '🚶 Route to here',
+  'El servicio de rutas no responde': 'The routing service is not responding', 'No hay ruta a pie entre esos puntos': 'There is no walking route between those points',
+  'Punto no válido': 'Invalid point', 'Ruta demasiado larga (máx. 15 km)': 'Route too long (15 km max)',
   'Vistas': 'Views', 'Comodidad': 'Comfort', 'Accesibilidad': 'Accessibility', 'Sombra': 'Shade', 'Tranquilidad': 'Peace and quiet',
   'Espacio': 'Space', 'Limpieza': 'Cleanliness', 'Caudal': 'Water flow', 'Apta para mascotas': 'Pet-friendly', 'Horario': 'Opening hours',
   'Precio': 'Price', 'Catálogo': 'Range of products', 'Atención': 'Service', 'Detalles (opcional)': 'Details (optional)',
