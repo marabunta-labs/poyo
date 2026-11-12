@@ -3,6 +3,12 @@
 const LANGS = { es: 'Español', en: 'English' };
 const DICT = { en: {
   // tipos y filtros
+  'Todos los sitios': 'All places',
+  'Solo bases (todos los grupos)': 'Only bases (all groups)',
+  'Bases por grupo': 'Bases by group',
+  'Modo juego activado': 'Game mode on',
+  '🏴 Modo juego': '🏴 Game mode',
+  'Con el modo juego apagado no se ven las bases de colores ni los grupos en el mapa.': 'With game mode off, colored bases and groups are not shown on the map.',
   '🏴 ¡Prueba el modo juego!': '🏴 Try game mode!',
   '🏴 Mi grupo': '🏴 My group',
   'Cómo se juega': 'How to play',

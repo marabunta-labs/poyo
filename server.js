@@ -108,6 +108,7 @@ const STATS_SQL = `select p.id, p.lat, p.lng, p.name, p.type, p.status, count(r.
     round(avg(r.rating)::numeric, 1)::float as avg,
     (select g.color from poyo.place_control pc join poyo.groups g on g.id = pc.group_id where pc.place_id = p.id) as "baseColor",
     (select g.name from poyo.place_control pc join poyo.groups g on g.id = pc.group_id where pc.place_id = p.id) as "baseGroup",
+    (select pc.group_id from poyo.place_control pc where pc.place_id = p.id) as "baseGroupId",
     coalesce((select array_agg(ph) from (select unnest(r2.photos) as ph from poyo.reviews r2 where r2.place_id = p.id order by r2.created_at desc limit 6) x), '{}') as photos
   from poyo.places p left join poyo.reviews r on r.place_id = p.id`;
 const placeStats = (id) => q1(STATS_SQL + ' where p.id = $1 group by p.id', [id]);

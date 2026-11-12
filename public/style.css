@@ -10,6 +10,8 @@ html, body { margin:0; height:100%; font-family: system-ui, sans-serif; color:va
 button { font:inherit; cursor:pointer; }
 .fabs button { background:var(--green); color:#fff; border:0; border-radius:999px; padding:12px 18px; box-shadow:0 2px 10px #0004; font-weight:600; }
 @media (min-width:701px) { body:has(#panel:not([hidden])) .fabs { right:384px; } } /* con el panel abierto, los botones flotantes se apartan */
+#gamefilter { font:inherit; font-size:13px; padding:6px 10px; border-radius:99px; border:1px solid var(--line); background:var(--bg); color:var(--ink); max-width:100%; }
+#gamefilter[hidden] { display:none; }
 #gamebtn { background:linear-gradient(135deg,#6a3dd8,#9b59f0); }
 .howto { margin:8px 0 12px; padding:8px 10px; border:1px solid var(--line); border-radius:10px; font-size:14px; line-height:1.5; }
 .howto summary { cursor:pointer; font-weight:700; }

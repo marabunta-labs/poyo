@@ -3,6 +3,8 @@ const EMOJI = { bench: '🪑', picnic: '🧺', wall: '🧱', other: '📍', foun
 const GROUP = { bench: 'sit', picnic: 'sit', wall: 'sit', other: 'sit', fountain: 'fountain', shop: 'shop' };
 const FILTERS = { sit: t('🪑 Sentarse'), fountain: t('💧 Fuentes'), shop: t('🛒 Tiendas') };
 const visible = new Set(Object.keys(FILTERS));
+let gameOn = false; // modo juego (preferencia del navegador, se lee más abajo): sin él no hay aros de colores, ni bases, ni filtro de grupos
+let gameFilter = 'all', myGroup = null; // 'all' | 'bases' | 'mine' | id de un grupo
 const $ = (id) => document.getElementById(id);
 const el = (tag, props = {}, ...kids) => {
   const n = Object.assign(document.createElement(tag), props);
@@ -53,6 +55,7 @@ const BASES = { // los dos primeros son vectoriales SIN comercios ni iconos, par
 };
 const pref = (k, def) => { try { return localStorage.getItem('poyo-' + k) ?? def; } catch { return def; } };
 const setPref = (k, v) => { try { localStorage.setItem('poyo-' + k, v); } catch {} };
+gameOn = pref('game', '0') === '1';
 const hasWebGL = () => { try { return !!document.createElement('canvas').getContext('webgl'); } catch { return false; } };
 let baseKey = pref('base', 'light'), baseLayer, baseToken = 0;
 if (!BASES[baseKey]) baseKey = 'light';
@@ -80,7 +83,7 @@ let me = null, adding = false;
 // ---------- marcadores ----------
 const color = (p) => (!p.count ? '#8a8f8b' : p.avg >= 4 ? '#2f7d4f' : p.avg >= 3 ? '#c9a227' : '#c0392b');
 let emojiMode = pref('emoji', '0') === '1';
-const ring = (p) => (p.baseColor ? `;box-shadow:0 0 0 2px #fff,0 0 0 5px ${p.baseColor}` : ''); // aro del grupo que manda en el banco
+const ring = (p) => (gameOn && p.baseColor ? `;box-shadow:0 0 0 2px #fff,0 0 0 5px ${p.baseColor}` : ''); // aro del grupo que manda en el banco
 const icon = (p) => emojiMode ? L.divIcon({
   className: '', iconSize: [32, 32], iconAnchor: [16, 16],
   html: `<div class="emo${p.count ? '' : ' empty'}" style="border-radius:50%${ring(p)}"><span class="e">${EMOJI[p.type] || EMOJI.other}</span>${p.count ? `<b style="background:${color(p)}">${p.avg.toFixed(1)}</b>` : ''}</div>`,
@@ -88,7 +91,8 @@ const icon = (p) => emojiMode ? L.divIcon({
   className: '', iconSize: [30, 30], iconAnchor: [15, 30],
   html: `<div class="pin${p.count ? '' : ' empty'}" style="background:${color(p)}${ring(p)}"><span>${EMOJI[p.type] || EMOJI.other}</span>${p.count ? `<b>${p.avg.toFixed(1)}</b>` : ''}</div>`,
 });
-const shown = (p) => visible.has(GROUP[p.type]);
+const passesGame = (p) => !gameOn || gameFilter === 'all' || (gameFilter === 'bases' ? !!p.baseGroupId : gameFilter === 'mine' ? !!myGroup && p.baseGroupId === myGroup : p.baseGroupId === gameFilter);
+const shown = (p) => visible.has(GROUP[p.type]) && passesGame(p);
 function upsert(p) {
   const cur = { ...places.get(p.id), ...p };
   places.set(p.id, cur);
@@ -102,6 +106,28 @@ function upsert(p) {
 function applyFilters() {
   markers.forEach((mk, id) => (shown(places.get(id)) ? mk.addTo(map) : mk.remove()));
   if (map.getZoom() < 16) loadOSM(); // los grupos dependen de los tipos visibles
+}
+// Filtro por grupo de bases (solo con el modo juego activado): todos los sitios, solo bases, mi grupo o un grupo concreto
+const gameSel = $('gamefilter');
+function rebuildGameFilter() {
+  gameSel.hidden = !gameOn;
+  const count = new Map();
+  places.forEach((p) => { if (p.baseGroupId) count.set(p.baseGroupId, { name: p.baseGroup, n: (count.get(p.baseGroupId)?.n || 0) + 1 }); });
+  const groups = [...count].sort((a, b) => b[1].n - a[1].n).slice(0, 40);
+  gameSel.replaceChildren(el('option', { value: 'all', textContent: t('Todos los sitios') }), el('option', { value: 'bases', textContent: t('Solo bases (todos los grupos)') }),
+    ...(myGroup ? [el('option', { value: 'mine', textContent: t('🏴 Mi grupo') })] : []),
+    ...groups.map(([id, g]) => el('option', { value: id, textContent: `${g.name} (${g.n})` })));
+  if (![...gameSel.options].some((o) => o.value === gameFilter)) gameFilter = 'all';
+  gameSel.value = gameFilter;
+}
+rebuildGameFilter();
+gameSel.onfocus = rebuildGameFilter; // la lista de grupos sale de los sitios ya cargados
+gameSel.onchange = () => { gameFilter = gameSel.value; applyFilters(); };
+function setGame(on) { // activar o desactivar el modo juego: aros, filtro, fichas del banco y botón flotante
+  gameOn = on; setPref('game', on ? '1' : '0');
+  if (!on) gameFilter = 'all';
+  markers.forEach((mk, id) => mk.setIcon(icon(places.get(id))));
+  rebuildGameFilter(); applyFilters(); refreshGameAlert();
 }
 const chips = $('filters');
 Object.entries(FILTERS).forEach(([k, label]) => chips.append(el('button', { className: 'on', textContent: label, onclick: (e) => {
@@ -418,8 +444,10 @@ function setMe(u) {
 }
 async function refreshGameAlert() { // botón flotante: «¡Prueba el modo juego!» o, con grupo, «Mi grupo ⚠️2» (bases en peligro)
   let g = null;
-  if (me && !me.needsProfile) { try { g = await api('GET', '/groups/mine'); } catch {} }
-  $('gamebtn').textContent = g ? t('🏴 Mi grupo') + (g.atRisk ? ` ⚠️${g.atRisk}` : '') : t('🏴 ¡Prueba el modo juego!');
+  if (gameOn && me && !me.needsProfile) { try { g = await api('GET', '/groups/mine'); } catch {} }
+  myGroup = g?.id || null;
+  $('gamebtn').textContent = !gameOn ? t('🏴 ¡Prueba el modo juego!') : g ? t('🏴 Mi grupo') + (g.atRisk ? ` ⚠️${g.atRisk}` : '') : t('🏴 Modo juego');
+  rebuildGameFilter();
 }
 async function requireLogin(msg) { if (!me) { openAccount(msg); return false; } return true; }
 $('nav-me').onclick = () => (me ? openProfile(me.username) : openAccount());
@@ -524,7 +552,7 @@ function moderationBox(p) {
 
 // Juego de bases: quién manda en este banco y el botón de check-in (hay que estar a menos de 40 m)
 function gameBox(p, note) {
-  if (!['bench', 'picnic'].includes(p.type)) return null;
+  if (!gameOn || !['bench', 'picnic'].includes(p.type)) return null;
   const box = el('div', { className: 'gamebox' });
   box.append(p.control
     ? el('div', { className: 'base' }, el('span', { className: 'dot', style: `background:${p.control.group.color}` }),
@@ -632,7 +660,7 @@ async function loadProfile(username) {
     bio.onchange = () => api('PUT', '/me', { bio: bio.value }).then(setMe);
     c.append(bio);
   } else if (u.bio) c.append(el('p', { textContent: u.bio }));
-  if (u.badges?.length) c.append(el('div', { className: 'crits' }, ...u.badges.map((b) => el('span', { className: 'badge', textContent: BADGES[b] }))));
+  if (gameOn && u.badges?.length) c.append(el('div', { className: 'crits' }, ...u.badges.map((b) => el('span', { className: 'badge', textContent: BADGES[b] }))));
   const stat = (n, label) => el('div', {}, el('b', { textContent: n }), label);
   c.append(el('div', { className: 'stats' }, stat(u.reviewCount, t('reseñas')), stat(u.photoCount, t('fotos')),
     stat(u.avg ?? '–', t('nota media')), stat(u.friendCount, t('amigos'))));
@@ -845,6 +873,9 @@ async function loadGame() {
         '¿Un banco que no sale en el mapa? Créalo marcando «Reclamar con mi ubicación», con foto y nota: +5 puntos. Otra persona debe confirmar que existe.',
         'Los bancos con base llevan un aro del color del grupo. Si ves ⚠️, alguien está a punto de quitaros una base.',
         'Gana insignias en tu perfil: madrugador, rey del atardecer, fiel y explorador.'].map((x) => el('li', { textContent: t(x) })))), { open: !g }));
+  const sw = el('label', { className: 'rchk', style: 'margin:8px 0;font-weight:700' }, Object.assign(el('input', { type: 'checkbox', checked: gameOn }), { onchange: (ev) => { setGame(ev.target.checked); loadGame(); } }), t('Modo juego activado'));
+  c.append(sw);
+  if (!gameOn) { c.append(el('p', { className: 'muted', textContent: t('Con el modo juego apagado no se ven las bases de colores ni los grupos en el mapa.') })); return; }
   if (!me || me.needsProfile) c.append(el('button', { className: 'submit', style: 'width:100%;margin:10px 0', textContent: t('Inicia sesión para jugar'), onclick: () => openAuth(t('Inicia sesión para jugar')) }));
   else if (g) {
     c.append(el('h3', {}, dot(g.color), ' ' + g.name, el('small', { className: 'muted', textContent: ` · ${g.score} pts` })),
