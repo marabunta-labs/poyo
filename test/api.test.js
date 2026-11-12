@@ -77,6 +77,14 @@ test('reseñas: categorías por tipo (solo las válidas, 1-5)', async () => {
   assert.deepEqual((await call('GET', '/places/osm-778', null, 'cris')).body.reviews.find((x) => x.author === 'cris').ratings, {});
 });
 
+test('cuentas demo: la API las marca con isSeed', async () => {
+  await admin.query("update poyo.profiles set is_seed = true where username = 'cris'");
+  assert.equal((await call('GET', '/users/cris')).body.isSeed, true);
+  assert.equal((await call('GET', '/users/beto')).body.isSeed, false);
+  assert.equal((await call('GET', '/places/osm-778')).body.reviews.find((r) => r.author === 'cris').isSeed, true);
+  await admin.query("update poyo.profiles set is_seed = false where username = 'cris'");
+});
+
 test('amistades: solicitud, aceptar, rechazo, feed y perfil', async () => {
   assert.equal((await call('POST', '/friends/beto', null, 'ana')).body.relation, 'sent');
   { const x = await call('POST', '/friends/Ana.G', null, 'beto'); assert.equal(x.body.relation, 'friends', JSON.stringify(x)); } // beto acepta

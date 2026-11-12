@@ -13,6 +13,7 @@ create table if not exists poyo.profiles (
   username text not null check (username ~ '^[A-Za-z0-9_.-]{3,20}$'),
   bio text not null default '' check (char_length(bio) <= 200),
   avatar text not null default '',            -- ruta en el bucket poyo-photos ('' = sin foto)
+  is_seed boolean not null default false,     -- cuenta de ejemplo (datos demo, scripts/seed-demo.js): la app la marca como «demo»
   created_at timestamptz not null default now()
 );
 create unique index if not exists poyo_profiles_username_key on poyo.profiles (lower(username));

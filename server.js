@@ -9,6 +9,7 @@ const crypto = require('crypto');
 const zlib = require('zlib');
 const { Pool } = require('pg');
 const { planRoute, meters } = require('./routes');
+const { CRITERIA, validRatings } = require('./criteria');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC = path.join(__dirname, 'public');
@@ -19,14 +20,6 @@ const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || ''; // clave pública
 const BUCKET = 'poyo-photos';
 const TYPES = ['bench', 'picnic', 'wall', 'other', 'fountain', 'shop'];
 const MAX_PHOTOS = 3;
-// Criterios de la reseña según el tipo de sitio (opcionales, 1-5). Las etiquetas están en el cliente.
-const CRITERIA = {
-  bench: ['views', 'comfort', 'access', 'shade', 'calm'], picnic: ['comfort', 'space', 'clean', 'shade'],
-  wall: ['comfort', 'views'], other: ['comfort', 'views'], fountain: ['flow', 'clean', 'pets'], shop: ['hours', 'price', 'catalog', 'service'],
-};
-const validRatings = (type, raw) => Object.fromEntries(Object.entries(raw && typeof raw === 'object' ? raw : {})
-  .map(([k, v]) => [k, Math.round(Number(v))]).filter(([k, v]) => (CRITERIA[type] || []).includes(k) && v >= 1 && v <= 5));
-
 if (!process.env.DATABASE_URL || !SUPABASE_URL || !SUPABASE_ANON_KEY) {
   console.error('Faltan DATABASE_URL, SUPABASE_URL o SUPABASE_ANON_KEY (ver README).');
   process.exit(1);
@@ -91,11 +84,11 @@ const isAdmin = (u) => !!u && !u.needsProfile && ADMINS.includes(u.username.toLo
 async function currentUser(req) {
   const id = await authUserId(req);
   if (!id) return null;
-  return (await q1('select id, username, bio, avatar from poyo.profiles where id = $1', [id])) || { id, needsProfile: true };
+  return (await q1('select id, username, bio, avatar, is_seed from poyo.profiles where id = $1', [id])) || { id, needsProfile: true };
 }
 const needUser = (me) => (me && !me.needsProfile) || fail(401, me ? 'Elige tu nombre de usuario' : 'Inicia sesión para hacer esto');
-const publicUser = (u) => ({ id: u.id, username: u.username, bio: u.bio || '', avatar: u.avatar || '', isAdmin: isAdmin(u) });
-const byName = (name) => q1('select id, username, bio, avatar from poyo.profiles where lower(username) = lower($1)', [String(name)]);
+const publicUser = (u) => ({ id: u.id, username: u.username, bio: u.bio || '', avatar: u.avatar || '', isAdmin: isAdmin(u), isSeed: !!u.is_seed });
+const byName = (name) => q1('select id, username, bio, avatar, is_seed from poyo.profiles where lower(username) = lower($1)', [String(name)]);
 
 // Rutas de foto válidas: <uid>/<nombre>.jpg dentro del bucket poyo-photos, en la carpeta de quien las usa.
 const photoOk = (p, userId) => typeof p === 'string' && p.startsWith(userId + '/') && /^[0-9a-f-]{36}\/[A-Za-z0-9_-]{8,64}\.jpg$/.test(p);
@@ -104,7 +97,7 @@ const trash = (paths) => paths?.length ? q('insert into poyo.photo_trash (path) 
 
 // ---------- sitios y reseñas ----------
 const REVIEW_SQL = `select r.id, r.user_id as _uid, r.place_id as "placeId", r.rating, r.ratings, r.text, r.photos, r.created_at as "createdAt",
-    u.username as author, u.avatar,
+    u.username as author, u.avatar, u.is_seed as "isSeed",
     json_build_object('id', p.id, 'name', p.name, 'type', p.type, 'lat', p.lat, 'lng', p.lng) as place
   from poyo.reviews r join poyo.profiles u on u.id = r.user_id join poyo.places p on p.id = r.place_id`;
 const shapeReview = ({ _uid, ...r }, withPlace) => (withPlace ? r : { ...r, place: undefined });
@@ -325,7 +318,7 @@ async function api(req, res, url) {
     if (!/^[A-Za-z0-9_.-]{3,20}$/.test(username)) fail(400, 'Usuario: 3-20 letras, números, _ . -');
     try { await q('insert into poyo.profiles (id, username) values ($1, $2)', [me.id, username]); }
     catch (e) { if (e.code === '23505') fail(409, 'Ese usuario ya existe'); throw e; }
-    return send(res, 201, publicUser(await q1('select id, username, bio, avatar from poyo.profiles where id = $1', [me.id])));
+    return send(res, 201, publicUser(await q1('select id, username, bio, avatar, is_seed from poyo.profiles where id = $1', [me.id])));
   }
   if (req.method === 'PUT' && a === 'me') {
     needUser(me);
@@ -337,7 +330,7 @@ async function api(req, res, url) {
       if (me.avatar && me.avatar !== f) await trash([me.avatar]);
       await q('update poyo.profiles set avatar = $2 where id = $1', [me.id, f]);
     }
-    return send(res, 200, publicUser(await q1('select id, username, bio, avatar from poyo.profiles where id = $1', [me.id])));
+    return send(res, 200, publicUser(await q1('select id, username, bio, avatar, is_seed from poyo.profiles where id = $1', [me.id])));
   }
   if (req.method === 'DELETE' && a === 'me') { // borra mis datos de Poyo (la cuenta de Marabunta Labs sigue existiendo)
     needUser(me); await purgeUser(me);
@@ -387,20 +380,20 @@ async function api(req, res, url) {
     const term = clean(url.searchParams.get('q'), 20).toLowerCase();
     if (term.length < 2) { // sin texto: gente con más reseñas que aún no es tu amiga
       if (!me || me.needsProfile) return send(res, 200, []);
-      const rows = await q(`select u.id, u.username, u.bio, u.avatar from poyo.profiles u
+      const rows = await q(`select u.id, u.username, u.bio, u.avatar, u.is_seed from poyo.profiles u
         left join poyo.reviews r on r.user_id = u.id
         where u.id <> $1 and not exists (select 1 from poyo.friendships f where (f.from_id = $1 and f.to_id = u.id) or (f.to_id = $1 and f.from_id = u.id))
         group by u.id order by count(r.id) desc, u.created_at limit 10`, [me.id]);
       return send(res, 200, rows.map((u) => ({ ...publicUser(u), relation: 'none' })));
     }
-    const rows = await q(`select id, username, bio, avatar from poyo.profiles where lower(username) like $1 order by username limit 15`, ['%' + term.replace(/[%_\\]/g, '\\$&') + '%']);
+    const rows = await q(`select id, username, bio, avatar, is_seed from poyo.profiles where lower(username) like $1 order by username limit 15`, ['%' + term.replace(/[%_\\]/g, '\\$&') + '%']);
     return send(res, 200, await Promise.all(rows.map(async (u) => ({ ...publicUser(u), relation: await relation(me?.id, u.id) }))));
   }
   if (isGet && a === 'users' && b) {
     const u = await byName(b) || fail(404, 'Usuario no encontrado');
     const rev = await q(REVIEW_SQL + ' where r.user_id = $1 order by r.created_at desc', [u.id]);
     const st = await q1('select count(*)::int as n, round(avg(rating)::numeric, 1)::float as avg, coalesce(sum(cardinality(photos)), 0)::int as photos from poyo.reviews where user_id = $1', [u.id]);
-    const friends = await q(`select u2.id, u2.username, u2.bio, u2.avatar from poyo.profiles u2 where u2.id in (${friendIdsSql}) order by u2.username limit 30`, [u.id]);
+    const friends = await q(`select u2.id, u2.username, u2.bio, u2.avatar, u2.is_seed from poyo.profiles u2 where u2.id in (${friendIdsSql}) order by u2.username limit 30`, [u.id]);
     const fcount = await q1(`select count(*)::int as n from (${friendIdsSql}) x`, [u.id]);
     return send(res, 200, {
       ...publicUser(u), joined: (await q1('select created_at from poyo.profiles where id = $1', [u.id])).created_at, relation: await relation(me?.id, u.id),
@@ -413,9 +406,9 @@ async function api(req, res, url) {
   if (a === 'friends') {
     needUser(me);
     if (isGet && !b) {
-      const list = (cond, other) => q(`select u.id, u.username, u.bio, u.avatar from poyo.friendships f join poyo.profiles u on u.id = f.${other} where ${cond} order by u.username`, [me.id]);
+      const list = (cond, other) => q(`select u.id, u.username, u.bio, u.avatar, u.is_seed from poyo.friendships f join poyo.profiles u on u.id = f.${other} where ${cond} order by u.username`, [me.id]);
       return send(res, 200, {
-        friends: (await q(`select u.id, u.username, u.bio, u.avatar from poyo.profiles u where u.id in (${friendIdsSql}) order by u.username`, [me.id])).map(publicUser),
+        friends: (await q(`select u.id, u.username, u.bio, u.avatar, u.is_seed from poyo.profiles u where u.id in (${friendIdsSql}) order by u.username`, [me.id])).map(publicUser),
         incoming: (await list(`f.status = 'pending' and f.to_id = $1`, 'from_id')).map(publicUser),
         outgoing: (await list(`f.status = 'pending' and f.from_id = $1`, 'to_id')).map(publicUser),
       });

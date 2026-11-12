@@ -80,6 +80,7 @@ input, textarea, select { font:inherit; padding:8px; border:1px solid var(--line
 .rphotos { display:flex; gap:6px; margin-top:6px; flex-wrap:wrap; }
 .rphotos img { height:70px; border-radius:8px; cursor:zoom-in; }
 .link { background:none; border:0; padding:0; color:var(--green); font-weight:700; text-decoration:underline; }
+.badge.demo { background:#fff3cd; color:#7a5b00; }
 .badge { font-size:11px; background:#dff1e5; color:var(--green); border-radius:99px; padding:1px 7px; margin-left:4px; }
 .tabs { display:flex; gap:4px; margin:6px 0 12px; }
 .tabs button { flex:1; border:1px solid var(--line); background:#fff; border-radius:8px; padding:7px; }

@@ -252,8 +252,9 @@ const photoStrip = (files, cls) => files?.length
   ? el('div', { className: cls }, ...files.map((f) => el('img', { src: photoUrl(f), loading: 'lazy', onclick: () => lightbox(photoUrl(f)) })))
   : null;
 const userLink = (name) => el('button', { className: 'link', textContent: name, onclick: () => openProfile(name) });
+const demoBadge = () => el('span', { className: 'badge demo', textContent: t('demo'), title: t('Cuenta de ejemplo: no es una persona real') });
 const whoLine = (r, noDate) => el('div', { className: 'who' }, el('button', { className: 'plain', onclick: () => openProfile(r.author) }, avatarEl(r, 28)),
-  userLink(r.author), r.byFriend ? el('span', { className: 'badge', textContent: t('amigo') }) : null,
+  userLink(r.author), r.isSeed ? demoBadge() : null, r.byFriend ? el('span', { className: 'badge', textContent: t('amigo') }) : null,
   noDate ? null : el('time', { textContent: new Date(r.createdAt).toLocaleDateString(LOCALE) }));
 
 function reviewActions(r, refresh) {
@@ -517,7 +518,7 @@ async function loadProfile(username) {
   const own = u.relation === 'self';
   const avatar = avatarEl(u, 84);
   c.append(el('div', { className: 'cover' }), el('div', { className: 'head' }, avatar,
-    el('div', {}, el('h2', { textContent: '@' + u.username }, u.isAdmin ? el('span', { className: 'badge', textContent: 'mod' }) : null),
+    el('div', {}, el('h2', { textContent: '@' + u.username }, u.isAdmin ? el('span', { className: 'badge', textContent: 'mod' }) : null, u.isSeed ? demoBadge() : null),
       el('div', { className: 'sub', textContent: t('En Poyo desde {d}', { d: new Date(u.joined).toLocaleDateString(LOCALE, { month: 'long', year: 'numeric' }) }) }))));
   if (own) {
     const file = el('input', { type: 'file', accept: 'image/*', hidden: true });
@@ -610,7 +611,7 @@ function friendButton(u, refresh) {
 
 // ---------- social ----------
 const userRow = (u) => el('button', { className: 'plain urow', onclick: () => openProfile(u.username) }, avatarEl(u, 36),
-  el('span', {}, el('b', { textContent: '@' + u.username }), u.bio ? el('small', { textContent: u.bio }) : null));
+  el('span', {}, el('b', { textContent: '@' + u.username }), u.isSeed ? demoBadge() : null, u.bio ? el('small', { textContent: u.bio }) : null));
 const openSocial = (tab = 'feed') => visit('social:' + tab, () => loadSocial(tab));
 async function loadSocial(tab) {
   const c = content(), vid = viewId;
